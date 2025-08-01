@@ -17,9 +17,12 @@ var SpeedCmd = &cobra.Command{
 		}
 		cmd.Println("Speed test completed successfully")
 		cmd.Println("Results:")
-		for url, duration := range url2Durations {
-			cmd.Printf("URL: %s, Duration: %d ms\n", url, duration.Duration)
+		for i, x := range url2Durations {
+			if x.Duration >= 10000 {
+				cmd.Printf("%v, %s, Duration: N/A\n", i, x.Url)
+			} else {
+				cmd.Printf("%v, %s, Duration: %d ms\n", i, x.Url, x.Duration)
+			}
 		}
-		cmd.Println("You can use the following command to set the best mirror:")
 	},
 }

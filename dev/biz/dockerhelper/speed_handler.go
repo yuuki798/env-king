@@ -2,8 +2,8 @@ package dockerhelper
 
 import (
 	"context"
-	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +36,7 @@ func (this *SpeedHandler) FetchList() bool {
 		// 初始化每个 URL 的速度为 0
 		this.Url2Duration = append(this.Url2Duration, Url2Duration{
 			Url:      url,
-			Duration: 0,
+			Duration: 10000,
 		})
 	}
 	this.LockUrl2Duration.Unlock()
@@ -70,6 +70,9 @@ func (this *SpeedHandler) SpeedTest() {
 		}
 		this.LockUrl2Duration.Unlock()
 	}
+	sort.Slice(this.Url2Duration, func(i, j int) bool {
+		return this.Url2Duration[i].Duration < this.Url2Duration[j].Duration
+	})
 }
 
 func pullImage(url string, ch chan<- Url2Duration, wg *sync.WaitGroup) (time.Duration, bool) {
@@ -77,17 +80,17 @@ func pullImage(url string, ch chan<- Url2Duration, wg *sync.WaitGroup) (time.Dur
 	myImg := generateImageName(url, "busybox:1.37.0")
 	// 先删除缓存保证公平性
 	cmd := exec.Command("docker", "rmi", "-f", myImg)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	_ = cmd.Run() // 忽略错误，有可能镜像本来就不存在
 
 	// 开始测速
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	start := time.Now()
 	cmd = exec.CommandContext(ctx, "docker", "pull", myImg)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	err := cmd.Run()
 	if err != nil {
 		return 0, false // 拉取失败
