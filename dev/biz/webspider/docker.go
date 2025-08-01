@@ -8,7 +8,7 @@ import (
 
 type DockerMirrorListHandler struct {
 	url          string
-	list         []string
+	List         []string
 	collyHandler *colly.Collector
 }
 
@@ -18,7 +18,7 @@ func NewDockerMirrorListHandler(url string) *DockerMirrorListHandler {
 	}
 	return &DockerMirrorListHandler{
 		url:  url,
-		list: make([]string, 0),
+		List: make([]string, 0),
 		collyHandler: colly.NewCollector(
 			colly.AllowedDomains("www.coderjia.cn", "coderjia.cn"), // 防止跳转到其他域
 		),
@@ -27,11 +27,6 @@ func NewDockerMirrorListHandler(url string) *DockerMirrorListHandler {
 
 func (this *DockerMirrorListHandler) FetchList() bool {
 	var results []MirrorStatus
-
-	//// 创建一个默认的 Collector
-	//c := colly.NewCollector(
-	//	colly.AllowedDomains("example.com"), // 防止跳转到其他域
-	//)
 
 	// 提取表格内容
 	this.collyHandler.OnHTML("table tbody tr", func(ele *colly.HTMLElement) {
@@ -60,7 +55,7 @@ func (this *DockerMirrorListHandler) FetchList() bool {
 	}
 	for _, result := range results {
 		if result.Status == "正常" {
-			this.list = append(this.list, result.Address)
+			this.List = append(this.List, result.Address)
 		}
 	}
 	return true

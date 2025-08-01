@@ -1,34 +1,46 @@
 package dockerhelper
 
-import "sync"
+import (
+	"runtime"
+	"sync"
+)
 
 type Hub struct {
-	mode            string //镜像站模式或代理模式
-	applying        bool   // 模式是否已经应用
-	mu              sync.Mutex
+	mode string //可以用于读取状态
+	os   string // 操作系统类型
+
+	//applying bool   // 模式是否已经应用
+	mu sync.Mutex
+
 	speedHandler    *SpeedHandler
 	registryHandler *RegistryHandler
-	ProxyHandler    *ProxyHandler
+	//ProxyHandler    *ProxyHandler
 }
 
-func (this *Hub) SetMode(mode string) bool {
-	//分为镜像站模式和代理模式
+func NewHub() *Hub {
+	return &Hub{
+		mode:            "mirror", // 默认镜像站模式
+		os:              runtime.GOOS,
+		speedHandler:    NewSpeedHandler(),
+		registryHandler: NewRegistryHandler(runtime.GOOS),
+		//ProxyHandler:    NewProxyHandler(),
+	}
+}
+
+func (this *Hub) DoMirrorMode() bool {
+	this.mu.Lock()
+	this.mode = "mirror"
+	this.mu.Unlock()
+	return this.registryHandler.Do()
+}
+
+func (this *Hub) SpeedTest() (bool, []Url2Duration) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
-	switch mode {
-	case "mirror":
-		this.mode = "mirror" // 镜像站模式
-	case "proxy":
-		this.mode = "proxy" // 代理模式
-	default:
-		return false // 无效模式
+
+	if !this.speedHandler.FetchList() {
+		return false, nil
 	}
-	return true
-}
-
-func (this *Hub) Undo() {
-
-}
-func (this *Hub) Do() {
-
+	this.speedHandler.SpeedTest()
+	return true, this.speedHandler.Url2Duration
 }

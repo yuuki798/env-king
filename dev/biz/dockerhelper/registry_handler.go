@@ -5,24 +5,54 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"sort"
+	"sync"
 )
 
 type RegistryHandler struct {
-	RegistryStore   *RegistryStore
-	ApplyUserList   bool
-	ApplyPublicList bool
-	configPath      string
+	configPath string
+
+	PublicUrlDic map[string]bool // 记录公开镜像站
+	MuPublicUrl  sync.Mutex
+
+	// todo 这里可以添加用户自定义的镜像站
+	//UserUrlDic map[string]bool // 记录用户添加的镜像站，应该是从本地配置文件中读取的
+	//MuUserUrl  sync.Mutex
+
+	UrlList []string // 最终的镜像站列表
+
+	SpeedHandler *SpeedHandler // 用于获取速度排序
+}
+
+func NewRegistryHandler(os string) *RegistryHandler {
+	var configPath string
+	switch os {
+	case "linux":
+		configPath = "/etc/docker/daemon.json" // 默认配置文件路
+	case "windows":
+		configPath = "C:\\ProgramData\\docker\\config\\daemon.json" // Windows默认配置文件路径
+	case "darwin":
+		configPath = "/etc/docker/daemon.json" // macOS默认配置文件路径
+	}
+	return &RegistryHandler{
+		configPath:   configPath,
+		PublicUrlDic: make(map[string]bool),
+		//UserUrlDic:   make(map[string]bool),
+		SpeedHandler: NewSpeedHandler(),
+	}
+
 }
 
 func (this *RegistryHandler) Do() bool {
 	var myUrls []string
+	// 测速并生成排序后的镜像站列表
 	myUrls = this.generateSortedTargetUrlList()
+	// 写入配置
 	ok := this.writeListIntoConfigFile(myUrls)
 	if !ok {
 		log.Println("Error writing registry mirrors to config file.")
 		return false
 	}
+	// 重启Docker服务以应用配置
 	cmd := exec.Command("systemctl", "restart", "docker")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -75,32 +105,19 @@ func (this *RegistryHandler) writeListIntoConfigFile(myUrls []string) bool {
 func (this *RegistryHandler) generateSortedTargetUrlList() []string {
 	// 获取地址列表
 	var myUrls []string
-	if this.ApplyPublicList {
-		this.RegistryStore.MuPublicUrl.Lock()
-		for url := range this.RegistryStore.PublicUrlDic {
-			myUrls = append(myUrls, url)
-		}
-		this.RegistryStore.MuPublicUrl.Unlock()
+	// 应该使用speed_handler来获取速度排序
+	ok := this.SpeedHandler.FetchList() //todo 这里可以穿进去用户自己配置的urls
+	if !ok {
+		log.Println("Error fetching speed list.")
+		return myUrls
 	}
-	if this.ApplyUserList {
-		this.RegistryStore.MuUserUrl.Lock()
-		for url := range this.RegistryStore.UserUrlDic {
-			myUrls = append(myUrls, url)
+	this.SpeedHandler.SpeedTest()
+	this.SpeedHandler.LockUrl2Duration.Lock()
+	for _, url2Duration := range this.SpeedHandler.Url2Duration {
+		if url2Duration.Duration > 0 {
+			myUrls = append(myUrls, url2Duration.Url)
 		}
-		this.RegistryStore.MuUserUrl.Unlock()
 	}
-
-	// 按照speed排序
-	this.RegistryStore.MuSpeed.Lock()
-	sort.Slice(myUrls, func(i, j int) bool {
-		if _, ok := this.RegistryStore.SpeedDic[myUrls[i]]; !ok {
-			return false // 如果没有速度数据，认为速度较慢
-		}
-		if _, ok := this.RegistryStore.SpeedDic[myUrls[j]]; !ok {
-			return true // 如果没有速度数据，认为速度较慢
-		}
-		return this.RegistryStore.SpeedDic[myUrls[i]] > this.RegistryStore.SpeedDic[myUrls[j]]
-	})
-	this.RegistryStore.MuSpeed.Unlock()
+	this.SpeedHandler.LockUrl2Duration.Unlock()
 	return myUrls
 }
