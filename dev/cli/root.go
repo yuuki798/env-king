@@ -30,6 +30,7 @@ func InitCli() {
 	RootCmd.AddCommand(server.ServerCmd)
 	RootCmd.AddCommand(ek.EkCmd)
 	ek.EkCmd.AddCommand(ek.SpeedCmd)
+	ek.EkCmd.AddCommand(ek.MirrorModeCommand)
 
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ek.yaml)")
 
