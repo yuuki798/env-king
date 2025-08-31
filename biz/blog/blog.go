@@ -2,17 +2,24 @@ package blog
 
 import "time"
 
-// Hub 全局单例
+// Hub global singleton
 type Hub struct {
-	userManager *UserManager
-}
-
-// UserManager 管理所有用户的博客
-type UserManager struct {
+	userManager  *UserManager
 	blogManagers map[string]*blogManager
 }
 
-// blogManager 每个用户有一个
+// UserManager manages multiple users
+type UserManager struct {
+	users map[string]*User
+}
+type User struct {
+	userName  string
+	platforms []string
+	// It fetches from config file, and will be passed to platform adapters
+	platformConfigs []byte
+}
+
+// blogManager manages blogs for a single user
 type blogManager struct {
 	// We use a tree structure to store blogs
 	blogTreeRoot *DirectoryNode
