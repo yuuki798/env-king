@@ -1,7 +1,7 @@
 package webspider
 
 import (
-	colly "github.com/gocolly/colly/v2"
+	"github.com/gocolly/colly/v2"
 	"log"
 	"strings"
 )
