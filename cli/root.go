@@ -27,14 +27,20 @@ func InitCli() {
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
+	// router
 	RootCmd.AddCommand(server.ServerCmd)
 	RootCmd.AddCommand(ek.EkCmd)
+	RootCmd.AddCommand(ek.BlogCmd)
+	
 	ek.EkCmd.AddCommand(ek.SpeedCmd)
 	ek.EkCmd.AddCommand(ek.MirrorModeCommand)
 
-	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ek.yaml)")
+	ek.EkCmd.AddCommand()
 
+	// flags
+	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ek.yaml)")
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 	RootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	ek.InitBlogCLi()
 }

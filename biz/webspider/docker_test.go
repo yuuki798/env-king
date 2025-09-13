@@ -220,7 +220,7 @@ func TestFetchOs(t *testing.T) {
 //	handler := NewDockerMirrorListHandler("")
 //
 //	b.RunParallel(func(pb *testing.PB) {
-//		for pb.Next() {
+//		for pb.next() {
 //			ok := handler.FetchList()
 //			if !ok {
 //				b.Fatal("Failed to fetch Docker mirror list")
