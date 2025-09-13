@@ -120,7 +120,7 @@ func (this *PersistenceEngine) snapshot() error {
 }
 
 func (this *PersistenceEngine) run() error {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {

@@ -172,6 +172,9 @@ func (s *Shell) listArticles() error {
 		return fmt.Errorf("manager not initialized")
 	}
 
+	// 清空现有博客列表，避免重复添加
+	s.manager.BlogList = []*Blog{}
+
 	// 从本地读取文章
 	err := s.manager.ReadFromLocal()
 	if err != nil {
@@ -208,6 +211,9 @@ func (s *Shell) commitArticles() error {
 	}
 
 	fmt.Println("Committing articles to local storage...")
+
+	// 清空现有博客列表，避免重复添加
+	s.manager.BlogList = []*Blog{}
 
 	// 从本地读取文章
 	err := s.manager.ReadFromLocal()
@@ -250,7 +256,10 @@ func (s *Shell) pushArticles() error {
 		return nil
 	}
 
-	// 逻辑
+	// 清空现有博客列表，避免重复添加
+	s.manager.BlogList = []*Blog{}
+
+	// 从本地读取文章
 	err := s.manager.ReadFromLocal()
 	if err != nil {
 		return fmt.Errorf("failed to read from local: %v", err)

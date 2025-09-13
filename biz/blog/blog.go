@@ -339,6 +339,8 @@ type DirectoryNode struct {
 	blogs    []*Blog
 }
 type Blog struct {
+	// creation time
+	CreatedAt time.Time
 	// last updated time
 	UpdatedAt time.Time
 	Category  string
@@ -403,10 +405,12 @@ func (this *Manager) processMarkdownFile(filePath, blogPath string) error {
 
 // parseMarkdownFile 解析 Markdown 文件，提取元数据
 func (this *Manager) parseMarkdownFile(content []byte, path string) *Blog {
+	now := time.Now()
 	blog := &Blog{
 		Path:      path,
 		Content:   content,
-		UpdatedAt: time.Now(),
+		CreatedAt: now,
+		UpdatedAt: now,
 		Tags:      []string{},
 	}
 
@@ -484,6 +488,9 @@ func (b *Blog) GobEncode() ([]byte, error) {
 	enc := gob.NewEncoder(&buf)
 
 	// 手动序列化每个字段
+	if err := enc.Encode(b.CreatedAt); err != nil {
+		return nil, err
+	}
 	if err := enc.Encode(b.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -515,6 +522,9 @@ func (b *Blog) GobDecode(data []byte) error {
 	dec := gob.NewDecoder(buf)
 
 	// 手动反序列化每个字段
+	if err := dec.Decode(&b.CreatedAt); err != nil {
+		return err
+	}
 	if err := dec.Decode(&b.UpdatedAt); err != nil {
 		return err
 	}

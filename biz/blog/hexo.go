@@ -98,7 +98,7 @@ func (this *Hexo) PreProcess() error {
 			"date: %v\n"+
 			"tags: %v\n"+
 			"categories: %v\n"+
-			"---\n\n", blog.Title, blog.UpdatedAt, tagsString, blog.Category)
+			"---\n\n", blog.Title, blog.CreatedAt.Format("2006-01-02 15:04:05"), tagsString, blog.Category)
 
 		// read the original content
 		srcFilePath := this.blogManager.LocalPath + "/" + blog.Path
@@ -122,7 +122,7 @@ func (this *Hexo) PreProcess() error {
 	return nil
 }
 
-// processFrontMatter 处理Front Matter，如果已存在则覆盖，否则添加
+// processFrontMatter 处理Front Matter，如果已存在则智能合并，否则添加
 func (this *Hexo) processFrontMatter(content, newHeader string) string {
 	lines := strings.Split(content, "\n")
 
@@ -138,19 +138,84 @@ func (this *Hexo) processFrontMatter(content, newHeader string) string {
 		}
 
 		if endIndex != -1 {
-			// 找到Front Matter，进行替换
+			// 找到Front Matter，进行智能合并
+			existingFrontMatter := lines[1:endIndex]
+			mergedHeader := this.mergeFrontMatter(existingFrontMatter, newHeader)
+
 			// 保留Front Matter后的内容
 			remainingContent := strings.Join(lines[endIndex+1:], "\n")
 			// 如果剩余内容不为空，确保有换行
 			if remainingContent != "" && !strings.HasPrefix(remainingContent, "\n") {
 				remainingContent = "\n" + remainingContent
 			}
-			return newHeader + remainingContent
+			return mergedHeader + remainingContent
 		}
 	}
 
 	// 没有找到Front Matter或格式不正确，直接添加
 	return newHeader + content
+}
+
+// mergeFrontMatter 智能合并Front Matter，保留已存在的date字段
+func (this *Hexo) mergeFrontMatter(existing []string, newHeader string) string {
+	// 解析已存在的Front Matter
+	existingFields := make(map[string]string)
+	for _, line := range existing {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			existingFields[key] = value
+		}
+	}
+
+	// 解析新的Front Matter
+	newLines := strings.Split(newHeader, "\n")
+	newFields := make(map[string]string)
+	for _, line := range newLines {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "---" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			newFields[key] = value
+		}
+	}
+
+	// 合并字段，优先保留已存在的date字段
+	mergedFields := make(map[string]string)
+
+	// 先添加新字段
+	for key, value := range newFields {
+		mergedFields[key] = value
+	}
+
+	// 如果已存在date字段，则保留原有的date
+	if existingDate, exists := existingFields["date"]; exists {
+		mergedFields["date"] = existingDate
+	}
+
+	// 构建合并后的Front Matter
+	var result strings.Builder
+	result.WriteString("---\n")
+
+	// 按固定顺序输出字段
+	fieldOrder := []string{"title", "date", "tags", "categories"}
+	for _, field := range fieldOrder {
+		if value, exists := mergedFields[field]; exists {
+			result.WriteString(fmt.Sprintf("%s: %s\n", field, value))
+		}
+	}
+
+	result.WriteString("---\n")
+	return result.String()
 }
 
 func (this *Hexo) Publish() error {
