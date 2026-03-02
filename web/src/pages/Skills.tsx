@@ -1,0 +1,200 @@
+import { useState, useEffect } from 'react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { api, type LoadBalanceConfig, type ModelEndpoint } from '@/api/client'
+import { Wrench, Plus, Trash2, Scale } from 'lucide-react'
+
+export default function Skills() {
+  const [mcp, setMcp] = useState<string[]>([])
+  const [skills, setSkills] = useState<string[]>([])
+  const [mcpSource, setMcpSource] = useState('')
+  const [skillSource, setSkillSource] = useState('')
+  const [loadCfg, setLoadCfg] = useState<LoadBalanceConfig>({ models: [] })
+  const [newModel, setNewModel] = useState<Partial<ModelEndpoint>>({ name: '', url: '', weight: 1 })
+  const [loading, setLoading] = useState<string | null>(null)
+
+  const refresh = () => {
+    api.get('/skills/mcp').then((r) => setMcp(r.data || [])).catch(() => {})
+    api.get('/skills/list').then((r) => setSkills(r.data || [])).catch(() => {})
+    api.get('/skills/load-balance').then((r) => setLoadCfg(r.data || { models: [] })).catch(() => {})
+  }
+  useEffect(() => refresh(), [])
+
+  const installMcp = () => {
+    if (!mcpSource.trim()) return
+    setLoading('mcp')
+    api.post('/skills/mcp', { source: mcpSource })
+      .then(() => { setMcpSource(''); refresh() })
+      .finally(() => setLoading(null))
+  }
+
+  const uninstallMcp = (name: string) => {
+    setLoading('mcp')
+    api.delete(`/skills/mcp/${encodeURIComponent(name)}`).then(refresh).finally(() => setLoading(null))
+  }
+
+  const installSkill = () => {
+    if (!skillSource.trim()) return
+    setLoading('skill')
+    api.post('/skills/install', { source: skillSource })
+      .then(() => { setSkillSource(''); refresh() })
+      .finally(() => setLoading(null))
+  }
+
+  const uninstallSkill = (name: string) => {
+    setLoading('skill')
+    api.delete(`/skills/skill/${encodeURIComponent(name)}`).then(refresh).finally(() => setLoading(null))
+  }
+
+  const addModel = () => {
+    if (!newModel.name || !newModel.url) return
+    const next = {
+      models: [...loadCfg.models, { ...newModel, weight: newModel.weight ?? 1 } as ModelEndpoint],
+    }
+    setLoading('lb')
+    api.put('/skills/load-balance', next)
+      .then(() => { setNewModel({ name: '', url: '', weight: 1 }); refresh() })
+      .finally(() => setLoading(null))
+  }
+
+  const removeModel = (idx: number) => {
+    const next = { models: loadCfg.models.filter((_, i) => i !== idx) }
+    setLoading('lb')
+    api.put('/skills/load-balance', next).then(refresh).finally(() => setLoading(null))
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold">MCP & Skills</h1>
+
+      {/* 安装 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wrench className="size-5" />
+            安装
+          </CardTitle>
+          <CardContent className="pt-0 text-sm text-muted-foreground">
+            npm 包名或 URL，如 @modelcontextprotocol/server-filesystem
+          </CardContent>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2">
+            <input
+              className="flex-1 rounded border px-3 py-2"
+              placeholder="安装 MCP (npm 或 url)"
+              value={mcpSource}
+              onChange={(e) => setMcpSource(e.target.value)}
+            />
+            <Button onClick={installMcp} disabled={loading === 'mcp'}>
+              <Plus className="size-4 mr-2" /> 安装 MCP
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 rounded border px-3 py-2"
+              placeholder="安装 Skill (npm 或 url)"
+              value={skillSource}
+              onChange={(e) => setSkillSource(e.target.value)}
+            />
+            <Button onClick={installSkill} disabled={loading === 'skill'}>
+              <Plus className="size-4 mr-2" /> 安装 Skill
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 已安装 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>已安装</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-6 md:grid-cols-2">
+            <div>
+              <h3 className="font-medium mb-2">MCP</h3>
+              <ul className="space-y-1 text-sm">
+                {mcp.length === 0 ? (
+                  <li className="text-muted-foreground">暂无</li>
+                ) : (
+                  mcp.map((s) => (
+                    <li key={s} className="flex items-center justify-between py-1 border-b">
+                      {s}
+                      <Button variant="ghost" size="sm" onClick={() => uninstallMcp(s)}>
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+            <div>
+              <h3 className="font-medium mb-2">Skills</h3>
+              <ul className="space-y-1 text-sm">
+                {skills.length === 0 ? (
+                  <li className="text-muted-foreground">暂无</li>
+                ) : (
+                  skills.map((s) => (
+                    <li key={s} className="flex items-center justify-between py-1 border-b">
+                      {s}
+                      <Button variant="ghost" size="sm" onClick={() => uninstallSkill(s)}>
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 负载均衡 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Scale className="size-5" />
+            Token / 模型负载均衡
+          </CardTitle>
+          <CardContent className="pt-0 text-sm text-muted-foreground">
+            配置多模型端点及权重
+          </CardContent>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2 flex-wrap items-end">
+            <input
+              className="w-32 rounded border px-3 py-2"
+              placeholder="名称"
+              value={newModel.name}
+              onChange={(e) => setNewModel((m) => ({ ...m, name: e.target.value }))}
+            />
+            <input
+              className="flex-1 min-w-[180px] rounded border px-3 py-2"
+              placeholder="API URL"
+              value={newModel.url}
+              onChange={(e) => setNewModel((m) => ({ ...m, url: e.target.value }))}
+            />
+            <input
+              className="w-20 rounded border px-3 py-2"
+              type="number"
+              placeholder="权重"
+              value={newModel.weight ?? 1}
+              onChange={(e) => setNewModel((m) => ({ ...m, weight: parseInt(e.target.value) || 1 }))}
+            />
+            <Button onClick={addModel} disabled={loading === 'lb'}>添加</Button>
+          </div>
+          <ul className="space-y-1 text-sm">
+            {loadCfg.models?.map((m, i) => (
+              <li key={i} className="flex items-center justify-between py-2 border-b">
+                <span>{m.name} · {m.url} (权重 {m.weight})</span>
+                <Button variant="ghost" size="sm" onClick={() => removeModel(i)}>
+                  <Trash2 className="size-4" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
