@@ -3,9 +3,9 @@ package initial
 import (
 	"os"
 	"path/filepath"
+	"yuuki798/env-king/api"
 
 	"github.com/gin-gonic/gin"
-	"yuuki798/env-king/internal/api"
 )
 
 func InitRouter(r *gin.Engine) {

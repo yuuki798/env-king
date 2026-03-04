@@ -1,18 +1,19 @@
 package api
 
 import (
+	"yuuki798/env-king/api/agent"
+	"yuuki798/env-king/api/clash"
+	"yuuki798/env-king/api/script"
+	"yuuki798/env-king/api/skills"
+
 	"github.com/gin-gonic/gin"
-	"yuuki798/env-king/internal/api/agent"
-	"yuuki798/env-king/internal/api/clash"
-	"yuuki798/env-king/internal/api/pipeline"
-	"yuuki798/env-king/internal/api/skills"
 )
 
 func Setup(r *gin.Engine) {
 	r.Use(corsMiddleware())
 	api := r.Group("/api")
 	{
-		pipeline.Register(api)
+		script.Register(api)
 		clash.Register(api)
 		agent.Register(api)
 		skills.Register(api)
