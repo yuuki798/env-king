@@ -109,7 +109,7 @@ pnpm docs:build  # 产出 .vitepress/dist
 - **代码风格**：Go 使用 `gofmt`；前端遵循现有 `eslint` / `tsconfig` 规则，命名尽量清晰、语义化。
 - **文档贡献**：文档站在 `community/` 下，新增功能建议顺手补一页 Guide 或 Architecture。
 - **交流方式**：
-  - 交流 QQ 群：**Env King 交流群（QQ：请在此处替换为你的真实群号）**。
+  - 交流 QQ 群：**Env King 交流群（QQ：1079845993）**。
 
 ## License
 
