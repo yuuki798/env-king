@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,7 +76,7 @@ func listCronJobs(cronDir string) []string {
 	return crons
 }
 
-// Chat 接入 LLM，支持沙盒内执行、自我修改、git push、部署
+// Chat 接入 LLM 单轮对话（非流式），用于兼容原有 /agent/chat 接口。
 func Chat(msg string) (string, error) {
 	mu.Lock()
 	lastActivity = time.Now()
@@ -83,7 +84,13 @@ func Chat(msg string) (string, error) {
 	if strings.TrimSpace(msg) == "" {
 		return "请提供消息内容。", nil
 	}
-	return "Agent 功能开发中：已接收消息，后续将接入 LLM 执行链路。", nil
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	reply, _, err := ChatStream(ctx, "", msg, nil, nil, nil)
+	if err != nil {
+		return "", err
+	}
+	return reply, nil
 }
 
 // CronAdd 添加 cron 定时任务（最小可用：落盘保存）

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 
 const Topic = "script"
 const bucketWorkflows = "script_workflows"
+const bucketJobs = "script_jobs"
 
 type runExtra struct {
 	logs    string
@@ -38,7 +40,9 @@ func getQueue() *infra.JobQueue {
 	queueOnce.Do(func() {
 		baseDir = strings.TrimSpace(viper.GetString("script.work_dir"))
 		if baseDir == "" {
-			baseDir = filepath.Join(os.TempDir(), "env-king-script")
+			// 默认使用当前目录下的 workdir
+			cwd, _ := os.Getwd()
+			baseDir = filepath.Join(cwd, "workdir")
 		}
 		_ = os.MkdirAll(baseDir, 0755)
 		queue = infra.NewJobQueue(4, 100)
@@ -57,7 +61,11 @@ func getStore() (*infra.Store, error) {
 	storeOnce.Do(func() {
 		p := strings.TrimSpace(viper.GetString("script.store_path"))
 		if p == "" {
-			p = filepath.Join(baseDir, "script.db")
+			storeDir := filepath.Join(baseDir, "store")
+			_ = os.MkdirAll(storeDir, 0755)
+			p = filepath.Join(storeDir, "script.db")
+		} else {
+			_ = os.MkdirAll(filepath.Dir(p), 0755)
 		}
 		store, err = infra.OpenStore(p, nil)
 	})
@@ -148,25 +156,70 @@ func Presets() []PresetNodeDef {
 	}
 }
 
-// ListJobs 返回 script 任务列表。
+// ListJobs 返回 script 任务列表（内存队列 + 持久化历史）。
 func ListJobs() []*JobView {
-	q := getQueue()
-	jobs := q.JobsByTopic(Topic)
-	out := make([]*JobView, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, jobViewFrom(&jobs[i]))
+	// 1. 从持久化 store 读取历史任务
+	history, err := loadAllJobSnapshots()
+	if err != nil {
+		// 读失败时至少保证还能看到内存任务
+		history = nil
 	}
+	jobMap := make(map[string]*JobView, len(history))
+	for _, hv := range history {
+		if hv == nil || hv.ID == "" {
+			continue
+		}
+		jobMap[hv.ID] = hv
+	}
+
+	// 2. 用内存队列的最新状态覆盖（包含进行中的任务）
+	q := getQueue()
+	live := q.JobsByTopic(Topic)
+	for i := range live {
+		j := live[i]
+		view := jobViewFrom(&j)
+		jobMap[view.ID] = view
+	}
+
+	// 3. 输出并按时间排序（最近在前）
+	out := make([]*JobView, 0, len(jobMap))
+	for _, v := range jobMap {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		// 优先按 EnqueuedAt，其次 FinishedAt
+		ai, aj := out[i].EnqueuedAt, out[j].EnqueuedAt
+		if !ai.Equal(aj) {
+			return ai.After(aj)
+		}
+		return out[i].FinishedAt.After(out[j].FinishedAt)
+	})
 	return out
 }
 
-// GetJob 按 ID 获取任务。
+// GetJob 按 ID 获取任务（先查内存，再查历史）。
 func GetJob(id string) (*JobView, bool) {
 	q := getQueue()
-	j, ok := q.Job(id)
-	if !ok {
+	if j, ok := q.Job(id); ok {
+		return jobViewFrom(&j), true
+	}
+	// 不在内存队列里（可能是历史任务），尝试从 store 读取
+	s, err := getStore()
+	if err != nil || s == nil {
 		return nil, false
 	}
-	return jobViewFrom(&j), true
+	raw, err := s.GetString(bucketJobs, id)
+	if err != nil {
+		return nil, false
+	}
+	var v JobView
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false
+	}
+	if v.ID == "" {
+		return nil, false
+	}
+	return &v, true
 }
 
 // RunFlow 编排执行：按 steps 顺序执行，遇错即停。
@@ -193,6 +246,8 @@ func RunFlow(req FlowRunRequest) (*JobView, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	persistJobWhenDone(id)
 
 	j, _ := getQueue().Job(id)
 	return jobViewFrom(&j), nil
@@ -221,8 +276,12 @@ func RunCommand(req RunCommandRequest) (*JobView, error) {
 		if job.Meta != nil {
 			job.Meta["work_dir"] = dir
 		}
+		safeCmd, err := sanitizeShellCommand(cmd, dir)
+		if err != nil {
+			return err
+		}
 		sh := infra.NewShell().WithDir(dir)
-		res := sh.RunCombined(ctx, cmd)
+		res := sh.RunCombined(ctx, safeCmd)
 		ex := getExtra(job.ID)
 		if ex != nil {
 			ex.appendLog(res.Stdout)
@@ -239,6 +298,8 @@ func RunCommand(req RunCommandRequest) (*JobView, error) {
 		return nil, err
 	}
 
+	persistJobWhenDone(id)
+
 	j, _ := getQueue().Job(id)
 	return jobViewFrom(&j), nil
 }
@@ -249,6 +310,110 @@ func substituteTemplate(body string, values map[string]string) string {
 		body = strings.ReplaceAll(body, "{{ "+k+" }}", v)
 	}
 	return body
+}
+
+// sanitizeShellCommand 对 shell 命令做安全检查：
+// 1) 禁止出现 ../
+// 2) 限制 rm 的目标只能落在脚本工作目录下（即 script.work_dir）
+func sanitizeShellCommand(cmd, workDir string) (string, error) {
+	if strings.Contains(cmd, "../") {
+		return "", fmt.Errorf("安全限制：命令中禁止包含 \"../\" 路径片段")
+	}
+
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	if len(fields) == 0 {
+		return cmd, nil
+	}
+	if fields[0] != "rm" {
+		return cmd, nil
+	}
+
+	base := getBaseDir()
+
+	// 遍历 rm 的非选项参数，确保删除目标在 base 之下
+	for _, arg := range fields[1:] {
+		if arg == "--" || strings.HasPrefix(arg, "-") {
+			continue
+		}
+		// 为简单起见，禁止通配符，避免误删
+		if strings.ContainsAny(arg, "*?") {
+			return "", fmt.Errorf("安全限制：rm 命令不允许使用通配符（* 或 ?）")
+		}
+		target := arg
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(workDir, target)
+		}
+		target = filepath.Clean(target)
+		rel, err := filepath.Rel(base, target)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return "", fmt.Errorf("安全限制：rm 仅允许删除 %s 下的文件或目录", base)
+		}
+	}
+
+	return cmd, nil
+}
+
+// persistJobWhenDone 在 Job 结束后将其快照持久化到 store。
+func persistJobWhenDone(id string) {
+	go func() {
+		q := getQueue()
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			j, ok := q.Job(id)
+			if !ok {
+				// 队列中已不存在，放弃
+				return
+			}
+			if j.Status == infra.JobPending || j.Status == infra.JobRunning {
+				<-ticker.C
+				continue
+			}
+			_ = saveJobSnapshot(&j)
+			return
+		}
+	}()
+}
+
+// saveJobSnapshot 将单个 Job 的视图写入持久化存储。
+func saveJobSnapshot(j *infra.Job) error {
+	s, err := getStore()
+	if err != nil || s == nil {
+		return err
+	}
+	view := jobViewFrom(j)
+	raw, err := json.Marshal(view)
+	if err != nil {
+		return err
+	}
+	return s.PutString(bucketJobs, view.ID, raw)
+}
+
+// loadAllJobSnapshots 读取所有已持久化的 Job 视图。
+func loadAllJobSnapshots() ([]*JobView, error) {
+	s, err := getStore()
+	if err != nil || s == nil {
+		return nil, err
+	}
+	keys, err := s.ListKeysString(bucketJobs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*JobView, 0, len(keys))
+	for _, k := range keys {
+		id := string(k)
+		raw, err := s.GetString(bucketJobs, id)
+		if err != nil {
+			continue
+		}
+		var v JobView
+		if err := json.Unmarshal(raw, &v); err != nil || v.ID == "" {
+			continue
+		}
+		out = append(out, &v)
+	}
+	return out, nil
 }
 
 func executeSteps(ctx context.Context, job *infra.Job, steps []Step, inputs map[string]string, workDir string) error {
@@ -276,9 +441,15 @@ func executeSteps(ctx context.Context, job *infra.Job, steps []Step, inputs map[
 			return fmt.Errorf("step %q: command empty after substitution", name)
 		}
 
+		// 基本安全策略：禁止 ../，限制 rm 作用范围在脚本工作目录内
+		safeCmd, err := sanitizeShellCommand(cmd, workDir)
+		if err != nil {
+			return fmt.Errorf("step %q: %w", name, err)
+		}
+
 		switch step.Kind {
 		case StepKindShell:
-			res := sh.RunCombined(runCtx, cmd)
+			res := sh.RunCombined(runCtx, safeCmd)
 			log(res.Stdout + "\n")
 			if !res.Success() {
 				if res.Stderr != "" {
@@ -465,6 +636,8 @@ func RunWorkflow(req WorkflowRunRequest) (*JobView, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	persistJobWhenDone(id)
 
 	j, _ := getQueue().Job(id)
 	return jobViewFrom(&j), nil

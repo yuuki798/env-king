@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { api, type LoadBalanceConfig, type ModelEndpoint } from '@/api/client'
 import { Wrench, Plus, Trash2, Scale } from 'lucide-react'
 
@@ -36,7 +37,9 @@ export default function Skills() {
   const installSkill = () => {
     if (!skillSource.trim()) return
     setLoading('skill')
-    api.post('/skills/install', { source: skillSource })
+    const cmd = skillSource.trim()
+    const body = cmd.includes('npx') || cmd.includes('skills add') ? { command: cmd } : { source: cmd }
+    api.post('/skills/install', body)
       .then(() => { setSkillSource(''); refresh() })
       .finally(() => setLoading(null))
   }
@@ -79,21 +82,16 @@ export default function Skills() {
           </CardContent>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex gap-2">
-            <input
-              className="flex-1 rounded border px-3 py-2"
-              placeholder="安装 MCP (npm 或 url)"
-              value={mcpSource}
-              onChange={(e) => setMcpSource(e.target.value)}
-            />
-            <Button onClick={installMcp} disabled={loading === 'mcp'}>
+          <div className="flex gap-2 opacity-60">
+            <Input className="flex-1" placeholder="安装 MCP (暂未开放)" value={mcpSource} onChange={(e) => setMcpSource(e.target.value)} disabled />
+            <Button onClick={installMcp} disabled>
               <Plus className="size-4 mr-2" /> 安装 MCP
             </Button>
           </div>
           <div className="flex gap-2">
-            <input
-              className="flex-1 rounded border px-3 py-2"
-              placeholder="安装 Skill (npm 或 url)"
+            <Input
+              className="flex-1"
+              placeholder="npx skills add https://github.com/vercel-labs/skills --skill find-skills"
               value={skillSource}
               onChange={(e) => setSkillSource(e.target.value)}
             />
@@ -162,25 +160,9 @@ export default function Skills() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-2 flex-wrap items-end">
-            <input
-              className="w-32 rounded border px-3 py-2"
-              placeholder="名称"
-              value={newModel.name}
-              onChange={(e) => setNewModel((m) => ({ ...m, name: e.target.value }))}
-            />
-            <input
-              className="flex-1 min-w-[180px] rounded border px-3 py-2"
-              placeholder="API URL"
-              value={newModel.url}
-              onChange={(e) => setNewModel((m) => ({ ...m, url: e.target.value }))}
-            />
-            <input
-              className="w-20 rounded border px-3 py-2"
-              type="number"
-              placeholder="权重"
-              value={newModel.weight ?? 1}
-              onChange={(e) => setNewModel((m) => ({ ...m, weight: parseInt(e.target.value) || 1 }))}
-            />
+            <Input className="w-32" placeholder="名称" value={newModel.name} onChange={(e) => setNewModel((m) => ({ ...m, name: e.target.value }))} />
+            <Input className="flex-1 min-w-[180px]" placeholder="API URL" value={newModel.url} onChange={(e) => setNewModel((m) => ({ ...m, url: e.target.value }))} />
+            <Input className="w-20" type="number" placeholder="权重" value={newModel.weight ?? 1} onChange={(e) => setNewModel((m) => ({ ...m, weight: parseInt(e.target.value) || 1 }))} />
             <Button onClick={addModel} disabled={loading === 'lb'}>添加</Button>
           </div>
           <ul className="space-y-1 text-sm">

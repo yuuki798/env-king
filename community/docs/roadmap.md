@@ -2,7 +2,7 @@
 
 基于项目 `todo.md` 的规划。
 
-1. **Clash + Git + DevOps 流水线**  
+1. **Mihomo 代理 + Git + DevOps 流水线**  
    拉代码存本地，Docker build 与 push 到 Harbor，统一配置与配置中心集成。
 
 2. **Docker 镜像测速与代理**  
@@ -12,7 +12,7 @@
    支持简单爬虫任务编排。
 
 4. **前端完全 UI 管理**  
-   所有能力均可通过 Web 控制台完成（当前已覆盖 Pipeline、Clash、Agent、Skills）。
+   所有能力均可通过 Web 控制台完成（当前已覆盖 Pipeline、Mihomo 代理、Agent、Skills）。
 
 5. **Agent 对话与 MCP/Skill**  
    对话协助执行命令，MCP 与 Skill 的管理、自主安装与使用。

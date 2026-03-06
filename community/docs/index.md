@@ -4,7 +4,7 @@ Env King 是面向开发团队的**智能环境管家与 DevOps Agent**。
 
 ## 能做什么
 
-- **Clash + Git**：拉代码走代理加速，集成 clash-for-linux-install
+- **Mihomo 代理 + Git**：拉代码走代理加速，嵌入 mihomo 内核（子进程 + 配置托管）
 - **流水线**：GitHub（含私有仓库）→ Docker build → 推送到 Harbor
 - **智能 Agent**：沙盒内 cron、自我修改、git commit/push、自主部署
 - **MCP & Skills**：安装/卸载、模型负载均衡、长短期记忆

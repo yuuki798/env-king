@@ -20,8 +20,8 @@ func Register(r *gin.RouterGroup) {
 	g.POST("/workflows", createWorkflow)
 	g.PUT("/workflows/:id", updateWorkflow)
 	g.DELETE("/workflows/:id", deleteWorkflow)
+	g.POST("/workflows/init", initWorkflows)   // 静态路径放前面，避免被 :id 匹配
 	g.POST("/workflows/:id/run", runWorkflow)
-	g.POST("/workflows/init", initWorkflows)
 }
 
 func listJobs(c *gin.Context) {

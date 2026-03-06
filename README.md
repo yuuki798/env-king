@@ -1,12 +1,12 @@
 # Env King
 
-专属于开发团队的**智能环境管家与 DevOps Agent**。集成 Clash 代理、GitHub 流水线、Agent 沙盒、MCP/Skills，支持自我修改与自主部署。
+专属于开发团队的**智能环境管家与 DevOps Agent**。集成 Mihomo 代理、GitHub 流水线、Agent 沙盒、MCP/Skills，支持自我修改与自主部署。
 
 ## 愿景
 
 让每个开发团队都拥有一个懂自己上下文的专属智能运维助手。
 
-- **加速访问**：Clash 代理 + Docker 镜像测速
+- **加速访问**：Mihomo 代理 + Docker 镜像测速
 - **流水线自动化**：GitHub → Docker → Harbor
 - **MCP & Skills**：可安装、可扩展
 - **Agent 沙盒**：cron、自我修改、git、自主部署
@@ -14,10 +14,10 @@
 ## 核心特性
 
 - **DevOps 流水线**：从 GitHub（含私有仓库）拉代码，Docker build 并推送到 Harbor，可统一配置
-- **Clash 代理**：集成 clash-for-linux-install，git clone / docker pull 走代理加速
+- **Mihomo 代理**：嵌入 mihomo 内核（子进程 + 配置托管），git clone / docker pull 走代理加速
 - **智能 Agent**：workspace 沙盒、cron 管理、自我修改日志、git commit/push、go build 部署
 - **MCP & Skills**：安装/卸载、Token/模型负载均衡、长短期记忆接口
-- **前端管理控制台**：Dashboard、Pipeline、Clash、Agent、Skills 全 UI 管理（`web/`）
+- **前端管理控制台**：Dashboard、Pipeline、Mihomo 代理、Agent、Skills 全 UI 管理（`web/`）
 
 ## 项目结构
 
@@ -29,7 +29,7 @@ env-king/
 ├── internal/api/         # Gin API
 ├── biz/
 │   ├── pipeline/        # GitHub → Docker → Harbor
-│   ├── clash/
+│   ├── mihomo/
 │   ├── agent/
 │   └── skills/
 ├── web/                  # 管理控制台 (pnpm + Vite + React)
@@ -69,15 +69,15 @@ cd web && pnpm install && pnpm dev
 
 ```bash
 ./env-king pipeline trigger --repo owner/repo --branch main
-./env-king clash install   # 仅 Linux
-./env-king clash on
+./env-king mihomo install   # 仅 Linux
+./env-king mihomo on
 ./env-king agent chat "你好"
 ./env-king skills list
 ```
 
 ## 路线图（见 todo.md）
 
-1. Clash + Git 拉代码 + DevOps 流水线，集成配置中心
+1. Mihomo 代理 + Git 拉代码 + DevOps 流水线，集成配置中心
 2. Docker 镜像测速与代理设置
 3. 爬虫工作流
 4. 前端完全 UI 管理
@@ -86,6 +86,8 @@ cd web && pnpm install && pnpm dev
 7. 服务器指标、K8s 分布式部署与管理面板
 
 ## 社区与文档
+
+- **Agent / MCP / Skills 设计**：参见 [docs/agent-mcp-design.md](docs/agent-mcp-design.md)。
 
 文档站在 `community/`，使用 [VitePress](https://vitepress.dev/) 构建，与 `web/` 管理控制台分离。
 

@@ -2,6 +2,7 @@ package skills
 
 import (
 	"net/http"
+	"strings"
 	"yuuki798/env-king/biz/skills"
 
 	"github.com/gin-gonic/gin"
@@ -55,13 +56,23 @@ func listSkills(c *gin.Context) {
 
 func installSkill(c *gin.Context) {
 	var req struct {
-		Source string `json:"source"`
+		Command string `json:"command"` // 完整命令，如 npx skills add https://github.com/vercel-labs/skills --skill find-skills
+		Source  string `json:"source"`
+		Skill   string `json:"skill"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Source == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "source required"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	if err := skills.InstallSkill(req.Source); err != nil {
+	cmdOrSource := strings.TrimSpace(req.Command)
+	if cmdOrSource == "" {
+		cmdOrSource = strings.TrimSpace(req.Source)
+	}
+	if cmdOrSource == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "command 或 source 不能为空"})
+		return
+	}
+	if err := skills.InstallSkill(cmdOrSource, strings.TrimSpace(req.Skill)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -7,19 +7,44 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 })
 
-export interface PipelineJob {
-  id: string
-  repo: string
-  branch: string
-  status: "pending" | "building" | "pushing" | "success" | "failed"
-  imageTag?: string
-  harborRepo?: string
-  startedAt?: string
-  finishedAt?: string
-  logs?: string
+// --- Script / Workflow ---
+export interface ScriptStep {
+  name: string
+  kind: string
+  command: string
 }
 
-export interface ClashStatus {
+export interface ScriptJobView {
+  id: string
+  topic: string
+  status: string
+  error?: string
+  logs?: string
+  workDir?: string
+  meta?: Record<string, string>
+  startedAt?: string
+  finishedAt?: string
+  enqueued_at?: string
+}
+
+export interface Workflow {
+  id: string
+  name: string
+  workDir?: string
+  steps: ScriptStep[]
+  defaultInputs?: Record<string, string>
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface PresetNodeDef {
+  kind: string
+  label: string
+  commandTemplate: string
+  params: { key: string; label: string; type: string; default?: string }[]
+}
+
+export interface MihomoStatus {
   running: boolean
   proxyPort?: number
   mixedPort?: number
@@ -46,4 +71,11 @@ export interface ModelEndpoint {
 
 export interface LoadBalanceConfig {
   models: ModelEndpoint[]
+}
+
+// Agent 流式对话 + 自动填表
+export interface AgentFormFillAction {
+  page: string
+  form: string
+  payload: Record<string, unknown>
 }

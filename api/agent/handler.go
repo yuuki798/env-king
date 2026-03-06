@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"yuuki798/env-king/biz/agent"
 
@@ -10,7 +12,9 @@ import (
 func Register(r *gin.RouterGroup) {
 	g := r.Group("/agent")
 	g.GET("/state", getState)
+	g.GET("/skills", listSkills)
 	g.POST("/chat", chat)
+	g.POST("/chat/stream", chatStream)
 	g.GET("/cron", listCron)
 	g.POST("/cron", addCron)
 	g.DELETE("/cron/:name", removeCron)
@@ -18,6 +22,18 @@ func Register(r *gin.RouterGroup) {
 	g.POST("/git/commit", gitCommit)
 	g.POST("/git/push", gitPush)
 	g.POST("/deploy", deploy)
+}
+
+func listSkills(c *gin.Context) {
+	skills, err := agent.ListSkills()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if skills == nil {
+		skills = []agent.Skill{}
+	}
+	c.JSON(http.StatusOK, skills)
 }
 
 func getState(c *gin.Context) {
@@ -39,6 +55,52 @@ func chat(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"reply": reply})
+}
+
+func chatStream(c *gin.Context) {
+	var req struct {
+		Message      string   `json:"message"`
+		CurrentPage  string   `json:"currentPage"`
+		ActiveSkills []string `json:"activeSkills"`
+		History      []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message required"})
+		return
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	history := make([]struct{ Role, Content string }, len(req.History))
+	for i := range req.History {
+		history[i].Role = req.History[i].Role
+		history[i].Content = req.History[i].Content
+	}
+
+	streamFn := func(ctx context.Context, chunk []byte) error {
+		c.SSEvent("message", string(chunk))
+		c.Writer.Flush()
+		return nil
+	}
+	_, formFill, err := agent.ChatStream(c.Request.Context(), req.CurrentPage, req.Message, history, req.ActiveSkills, streamFn)
+	if err != nil {
+		c.SSEvent("error", err.Error())
+		c.Writer.Flush()
+		return
+	}
+	if formFill != nil {
+		raw, _ := json.Marshal(formFill)
+		c.SSEvent("form_fill", string(raw))
+		c.Writer.Flush()
+	}
+	c.SSEvent("done", "")
+	c.Writer.Flush()
 }
 
 func listCron(c *gin.Context) {

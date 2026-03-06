@@ -46,6 +46,6 @@ agent:
 ## 下一步
 
 - 在控制台 **Pipeline** 页触发一次构建
-- 在 **Clash** 页查看/启停代理（仅 Linux）
+- 在 **Mihomo 代理** 页查看/启停代理、编辑配置
 - 在 **Agent** 页添加 cron、对话、自我修改
 - 在 **Skills** 页安装 MCP/Skill、配置负载均衡

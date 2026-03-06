@@ -2,7 +2,8 @@
 
 export const config = {
   dev: {
-    apiBaseUrl: '/api', // 开发时走 Vite proxy -> localhost:8080
+    // 开发时直连后端，避免 Vite 未代理时返回 index.html
+    apiBaseUrl: import.meta.env.VITE_API_URL || 'http://localhost:8080/api',
   },
   prod: {
     apiBaseUrl: import.meta.env.VITE_API_URL || '/api', // 生产同源用 /api，跨域需配置完整 URL

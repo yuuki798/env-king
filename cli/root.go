@@ -31,7 +31,7 @@ func InitCli() {
 	RootCmd.AddCommand(server.ServerCmd)
 	RootCmd.AddCommand(ek.EkCmd)
 	RootCmd.AddCommand(ek.BlogCmd)
-	RootCmd.AddCommand(ek.ClashCmd)
+	RootCmd.AddCommand(ek.MihomoCmd)
 	RootCmd.AddCommand(ek.PipelineCmd)
 	RootCmd.AddCommand(ek.AgentCmd)
 	RootCmd.AddCommand(ek.SkillsCmd)
