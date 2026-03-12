@@ -2,6 +2,10 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
+# 使用 Go 模块代理，加速依赖下载（可通过 --build-arg GOPROXY=... 覆盖）
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
+
 COPY go.mod go.sum ./
 RUN go mod download
 
