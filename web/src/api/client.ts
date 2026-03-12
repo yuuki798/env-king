@@ -79,3 +79,43 @@ export interface AgentFormFillAction {
   form: string
   payload: Record<string, unknown>
 }
+
+// Agent 持久化会话
+export interface ConversationMessage {
+  role: string
+  content: string
+  createdAt?: string
+}
+
+export interface Conversation {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messages: ConversationMessage[]
+}
+
+// Agent 记忆（openclaw 双来源）
+export interface MemorySearchResult {
+  path: string
+  startLine: number
+  endLine: number
+  score: number
+  snippet: string
+  source: "memory" | "sessions"
+}
+
+export interface MemorySearchResponse {
+  items: MemorySearchResult[]
+  disabled?: boolean
+  reason?: string
+  error?: string
+}
+
+export interface MemoryFileResponse {
+  text: string
+  path: string
+  disabled?: boolean
+  reason?: string
+  error?: string
+}

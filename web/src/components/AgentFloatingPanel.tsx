@@ -4,9 +4,12 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { getConfig } from "@/config"
 import { useAgentFormFill } from "@/contexts/AgentFormFillContext"
-import type { AgentFormFillAction } from "@/api/client"
+import type { AgentFormFillAction, Conversation } from "@/api/client"
 import { api } from "@/api/client"
 import { Bot, Send, Minimize2, Zap } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkBreaks from "remark-breaks"
+import remarkGfm from "remark-gfm"
 import { cn } from "@/lib/utils"
 
 type ChatMessage = { role: "user" | "assistant"; content: string }
@@ -50,7 +53,58 @@ function parseSSE(
   return reader.read().then(pump)
 }
 
-// 核心对话逻辑：可复用于浮窗和 Agent 全页面
+// 预处理：将字面量 \n 转为真实换行，确保 Markdown 正确解析
+function normalizeNewlines(s: string): string {
+  return s.replace(/\\n/g, "\n")
+}
+
+// Markdown 渲染用的自定义组件（提取到外部避免 JSX 解析歧义）
+const markdownComponents = {
+  pre: ({ children }: { children?: React.ReactNode }) => (
+    <pre className="!my-2 overflow-x-auto rounded-md bg-muted/80 p-2 text-xs text-foreground">{children}</pre>
+  ),
+  code: ({ className, children, ...props }: { className?: string; children?: React.ReactNode }) =>
+    className ? (
+      <code className={cn(className, "text-foreground")} {...props}>{children}</code>
+    ) : (
+      <code className="rounded bg-muted/80 px-1 py-0.5 text-xs text-foreground" {...props}>{children}</code>
+    ),
+  // 标题使用深色、加粗，避免灰色
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="text-lg font-bold text-foreground mt-3 mb-1 first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="text-base font-semibold text-foreground mt-3 mb-1 first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="text-sm font-semibold text-foreground mt-2 mb-1 first:mt-0">{children}</h3>
+  ),
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="text-foreground my-1.5 [&:first-child]:mt-0 [&:last-child]:mb-0">{children}</p>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li className="text-foreground">{children}</li>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-primary">{children}</strong>
+  ),
+}
+
+// MarkdownContent：将 LLM 输出即时渲染为 Markdown（流式输出时也会实时更新）
+// remark-breaks: 单换行转为 <br>；remark-gfm: 表格、删除线等
+function MarkdownContent({ content }: { content: string }) {
+  const normalized = normalizeNewlines(content)
+  if (!normalized.trim()) return null
+  return (
+    <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground prose-li:text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <ReactMarkdown remarkPlugins={[remarkBreaks, remarkGfm]} components={markdownComponents}>
+        {normalized}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+// 核心对话逻辑：可复用于浮窗和 Agent 全页面（含会话持久化）
 export function useAgentChat(currentPage: string) {
   const { setFormFill } = useAgentFormFill()
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -59,8 +113,49 @@ export function useAgentChat(currentPage: string) {
   const [streamingContent, setStreamingContent] = useState("")
   const [skills, setSkills] = useState<Skill[]>([])
   const [activeSkills, setActiveSkills] = useState<Set<string>>(new Set())
+  const [sessionId, setSessionId] = useState<string>("")
+  const [sessions, setSessions] = useState<Conversation[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+
+  const loadSessions = useCallback(() => {
+    api.get<Conversation[]>("/agent/sessions")
+      .then((r) => setSessions(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setSessions([]))
+  }, [])
+
+  const selectSession = useCallback((id: string) => {
+    if (!id) return
+    api.get<Conversation>(`/agent/sessions/${id}`)
+      .then((r) => {
+        const msgs = (r.data?.messages ?? []).map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }))
+        setMessages(msgs)
+        setSessionId(id)
+      })
+      .catch(() => {})
+  }, [])
+
+  const startNewSession = useCallback(() => {
+    setSessionId("")
+    setMessages([])
+    import("sonner").then(({ toast }) => toast.success("已开始新会话"))
+  }, [])
+
+  const deleteSession = useCallback((id: string) => {
+    api.delete(`/agent/sessions/${id}`).then(() => {
+      loadSessions()
+      setSessionId((prev) => {
+        if (prev === id) {
+          setMessages([])
+          return ""
+        }
+        return prev
+      })
+    }).catch(() => {})
+  }, [loadSessions])
 
   // 只 fetch 一次（mount 时）；切页无需重新拉取，filter 实时计算
   useEffect(() => {
@@ -71,6 +166,10 @@ export function useAgentChat(currentPage: string) {
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    loadSessions()
+  }, [loadSessions])
 
   // 当页面切换或 skills 加载完成时，自动激活当前页面的 skills
   useEffect(() => {
@@ -119,6 +218,7 @@ export function useAgentChat(currentPage: string) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId: sessionId || undefined,
           message: text,
           currentPage,
           activeSkills: Array.from(activeSkills),
@@ -138,6 +238,8 @@ export function useAgentChat(currentPage: string) {
         if (event === "message") {
           fullContent += data
           setStreamingContent(fullContent)
+        } else if (event === "session") {
+          setSessionId(data)
         } else if (event === "form_fill") {
           try {
             const action = JSON.parse(data) as AgentFormFillAction
@@ -164,12 +266,14 @@ export function useAgentChat(currentPage: string) {
       setStreaming(false)
       abortRef.current = null
       scrollToBottom()
+      loadSessions()
     }
-  }, [input, streaming, messages, currentPage, activeSkills, setFormFill, scrollToBottom])
+  }, [input, streaming, messages, currentPage, activeSkills, sessionId, setFormFill, scrollToBottom, loadSessions])
 
   return {
     messages, input, setInput, streaming, streamingContent,
     skills, visibleSkills, activeSkills, toggleSkill,
+    sessionId, sessions, loadSessions, selectSession, startNewSession, deleteSession,
     sendMessage, scrollToBottom, messagesEndRef,
   }
 }
@@ -214,7 +318,7 @@ export function ChatBody({
   input: string
   setInput: (v: string) => void
   sendMessage: () => void
-  messagesEndRef: React.RefObject<HTMLDivElement>
+  messagesEndRef: React.RefObject<HTMLDivElement | null>
   emptyHint?: string
 }) {
   return (
@@ -235,12 +339,16 @@ export function ChatBody({
                 : "mr-auto bg-muted"
             )}
           >
-            {m.content}
+            {m.role === "user" ? (
+              <span className="whitespace-pre-wrap">{m.content}</span>
+            ) : (
+              <MarkdownContent content={m.content} />
+            )}
           </div>
         ))}
         {streaming && streamingContent && (
-          <div className="mr-auto rounded-lg bg-muted px-3 py-2 text-sm max-w-[95%] whitespace-pre-wrap">
-            {stripFormFillBlock(streamingContent)}
+          <div className="mr-auto rounded-lg bg-muted px-3 py-2 text-sm max-w-[95%]">
+            <MarkdownContent content={stripFormFillBlock(streamingContent)} />
           </div>
         )}
         <div ref={messagesEndRef} />

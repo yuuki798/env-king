@@ -331,6 +331,19 @@ func NewMemoryStore() MemoryStore {
 	return &memoryStoreImpl{short: map[string]string{}, long: map[string]string{}}
 }
 
+var (
+	defaultMemoryStore     MemoryStore
+	defaultMemoryStoreOnce sync.Once
+)
+
+// GetMemoryStore 返回全局单例 MemoryStore，供 Agent 对话后写入长短记忆使用
+func GetMemoryStore() MemoryStore {
+	defaultMemoryStoreOnce.Do(func() {
+		defaultMemoryStore = NewMemoryStore()
+	})
+	return defaultMemoryStore
+}
+
 type memoryStoreImpl struct {
 	mu    sync.RWMutex
 	short map[string]string
