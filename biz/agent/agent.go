@@ -55,7 +55,7 @@ func resolveWorkspaceDir() string {
 }
 
 func ensureAgentDirs(wd string) error {
-	for _, d := range []string{"", "cron", "logs"} {
+	for _, d := range []string{"", "cron", "logs", "conversations"} {
 		if err := os.MkdirAll(filepath.Join(wd, d), 0o755); err != nil {
 			return err
 		}

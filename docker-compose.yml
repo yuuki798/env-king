@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  env-king:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: env-king
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./workdir:/app/workdir
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: env-king-web
+    ports:
+      - "3001:3001"
+    depends_on:
+      - env-king
+    restart: unless-stopped
+
+

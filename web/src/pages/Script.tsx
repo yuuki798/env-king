@@ -20,6 +20,7 @@ import {
   X,
   Pencil,
   Copy,
+  GripVertical,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -30,6 +31,16 @@ const statusVariant: Record<string, 'default' | 'secondary' | 'success' | 'destr
   success: 'success',
   failed: 'destructive',
   canceled: 'outline',
+}
+
+function reorderSteps<T>(list: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex >= list.length) {
+    return list
+  }
+  const next = [...list]
+  const [removed] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, removed)
+  return next
 }
 
 export default function Script() {
@@ -128,7 +139,7 @@ export default function Script() {
         const j = r.data
         if (j) setActiveJob(j)
       })
-    }, 1500)
+    }, 300)
     return () => clearInterval(timer)
   }, [activeJob?.id, activeJob?.status])
 
@@ -373,9 +384,43 @@ export default function Script() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>步骤（命令中可用 &#123;&#123;变量名&#125;&#125; 占位）</Label>
+                  <Label>步骤（可拖拽调整顺序，命令中可用 &#123;&#123;变量名&#125;&#125; 占位）</Label>
                   {createSteps.map((step, i) => (
-                    <div key={i} className="flex gap-2 items-start flex-wrap rounded border p-3 bg-muted/30">
+                    <div
+                      key={i}
+                      data-step-index={i}
+                      className={cn(
+                        'flex gap-2 items-start flex-wrap rounded border p-3 bg-muted/30',
+                        'cursor-default'
+                      )}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        e.currentTarget.classList.add('ring-2', 'ring-primary/50')
+                      }}
+                      onDragLeave={(e) => {
+                        e.currentTarget.classList.remove('ring-2', 'ring-primary/50')
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        e.currentTarget.classList.remove('ring-2', 'ring-primary/50')
+                        const from = parseInt(e.dataTransfer.getData('application/x-step-index') ?? '', 10)
+                        const to = parseInt(e.currentTarget.dataset.stepIndex ?? '', 10)
+                        if (!Number.isNaN(from) && !Number.isNaN(to)) {
+                          setCreateSteps((s) => reorderSteps(s, from, to))
+                        }
+                      }}
+                    >
+                      <span
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('application/x-step-index', String(i))
+                          e.dataTransfer.effectAllowed = 'move'
+                        }}
+                        className="cursor-grab active:cursor-grabbing touch-none p-1 -m-1 text-muted-foreground hover:text-foreground"
+                        aria-label="拖拽调整顺序"
+                      >
+                        <GripVertical className="size-4" />
+                      </span>
                       <Input
                         placeholder="步骤名"
                         className="w-36"
@@ -616,9 +661,43 @@ export default function Script() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>步骤（命令中可用 &#123;&#123;变量名&#125;&#125; 占位）</Label>
+                <Label>步骤（可拖拽调整顺序，命令中可用 &#123;&#123;变量名&#125;&#125; 占位）</Label>
                 {editSteps.map((step, i) => (
-                  <div key={i} className="flex gap-2 items-start flex-wrap rounded border p-3 bg-muted/30">
+                  <div
+                    key={i}
+                    data-step-index={i}
+                    className={cn(
+                      'flex gap-2 items-start flex-wrap rounded border p-3 bg-muted/30',
+                      'cursor-default'
+                    )}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      e.currentTarget.classList.add('ring-2', 'ring-primary/50')
+                    }}
+                    onDragLeave={(e) => {
+                      e.currentTarget.classList.remove('ring-2', 'ring-primary/50')
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      e.currentTarget.classList.remove('ring-2', 'ring-primary/50')
+                      const from = parseInt(e.dataTransfer.getData('application/x-step-index') ?? '', 10)
+                      const to = parseInt(e.currentTarget.dataset.stepIndex ?? '', 10)
+                      if (!Number.isNaN(from) && !Number.isNaN(to)) {
+                        setEditSteps((s) => reorderSteps(s, from, to))
+                      }
+                    }}
+                  >
+                    <span
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('application/x-step-index', String(i))
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
+                      className="cursor-grab active:cursor-grabbing touch-none p-1 -m-1 text-muted-foreground hover:text-foreground"
+                      aria-label="拖拽调整顺序"
+                    >
+                      <GripVertical className="size-4" />
+                    </span>
                     <Input
                       placeholder="步骤名"
                       className="w-36"

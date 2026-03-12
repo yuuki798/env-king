@@ -281,16 +281,15 @@ func RunCommand(req RunCommandRequest) (*JobView, error) {
 			return err
 		}
 		sh := infra.NewShell().WithDir(dir)
-		res := sh.RunCombined(ctx, safeCmd)
 		ex := getExtra(job.ID)
-		if ex != nil {
-			ex.appendLog(res.Stdout)
-			if res.Stderr != "" {
-				ex.appendLog("ERROR: " + res.Stderr + "\n")
+		res := sh.RunCombinedStreaming(ctx, safeCmd, func(chunk []byte) {
+			if len(chunk) > 0 && ex != nil {
+				ex.appendLog(string(chunk))
 			}
-		}
+		})
+		// 输出已流式写入，失败时不再重复追加
 		if !res.Success() {
-			return fmt.Errorf("%s", res.Stderr)
+			return fmt.Errorf("%s", res.Stdout)
 		}
 		return nil
 	})
@@ -449,14 +448,17 @@ func executeSteps(ctx context.Context, job *infra.Job, steps []Step, inputs map[
 
 		switch step.Kind {
 		case StepKindShell:
-			res := sh.RunCombined(runCtx, safeCmd)
-			log(res.Stdout + "\n")
-			if !res.Success() {
-				if res.Stderr != "" {
-					log("ERROR: " + res.Stderr + "\n")
+			res := sh.RunCombinedStreaming(runCtx, safeCmd, func(chunk []byte) {
+				if len(chunk) > 0 {
+					log(string(chunk))
 				}
-				return fmt.Errorf("step %q: %s", name, res.Stderr)
+			})
+			if !res.Success() {
+				// 输出已流式写入，仅追加失败提示
+				log("\n[step failed]\n")
+				return fmt.Errorf("step %q: %s", name, res.Stdout)
 			}
+			log("\n")
 		default:
 			return fmt.Errorf("unknown step kind: %s", step.Kind)
 		}

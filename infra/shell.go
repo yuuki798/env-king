@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"sync"
 )
 
 // Shell 负责在 shell 中执行命令，类似 CLI 执行器。
@@ -148,6 +149,80 @@ func (s *Shell) RunCombined(ctx context.Context, cmd string) Result {
 
 	return Result{
 		Stdout:   combined.String(),
+		Stderr:   "",
+		ExitCode: code,
+	}
+}
+
+// chunkWriter 将每次 Write 转发给 onChunk，并累积到 buf，用于流式输出。
+type chunkWriter struct {
+	mu      sync.Mutex
+	buf     bytes.Buffer
+	onChunk func([]byte)
+}
+
+func (w *chunkWriter) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	w.mu.Lock()
+	w.buf.Write(p)
+	cb := w.onChunk
+	w.mu.Unlock()
+	if cb != nil {
+		b := make([]byte, len(p))
+		copy(b, p)
+		cb(b)
+	}
+	return len(p), nil
+}
+
+// RunCombinedStreaming 执行命令，stdout 与 stderr 合并，每收到一块数据就调用 onChunk。
+// onChunk 可能被并发调用（来自 stdout/stderr），但每次调用传入的 []byte 是独立的副本。
+func (s *Shell) RunCombinedStreaming(ctx context.Context, cmd string, onChunk func([]byte)) Result {
+	w := &chunkWriter{onChunk: onChunk}
+	shell := s.Path
+	if shell == "" {
+		if runtime.GOOS == "windows" {
+			shell = "cmd"
+		} else {
+			shell = "/bin/sh"
+		}
+	}
+
+	var c *exec.Cmd
+	if runtime.GOOS == "windows" && shell == "cmd" {
+		c = exec.CommandContext(ctx, shell, "/c", cmd)
+	} else {
+		c = exec.CommandContext(ctx, shell, "-c", cmd)
+	}
+
+	if s.Dir != "" {
+		c.Dir = s.Dir
+	}
+	if len(s.Env) > 0 {
+		c.Env = append(c.Env, s.Env...)
+	}
+	c.Stdout = w
+	c.Stderr = w
+
+	err := c.Run()
+	code := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			return Result{
+				Stdout:   w.buf.String(),
+				Stderr:   "",
+				ExitCode: -1,
+				Err:      err,
+			}
+		}
+	}
+
+	return Result{
+		Stdout:   w.buf.String(),
 		Stderr:   "",
 		ExitCode: code,
 	}
