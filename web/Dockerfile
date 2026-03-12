@@ -12,7 +12,7 @@ RUN pnpm config set registry $NPM_REGISTRY && pnpm install --frozen-lockfile
 COPY . .
 
 # 在构建阶段注入后端 API 地址，默认指向宿主机的 8080 端口
-ENV VITE_API_URL=http://localhost:8080/api
+ENV VITE_API_URL=http://localhost:28888/api
 
 RUN pnpm build
 
