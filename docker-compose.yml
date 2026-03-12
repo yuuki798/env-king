@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: env-king
     ports:
-      - "28888:8080"
+      - "127.0.0.1:28888:8080"
     volumes:
       - ./workdir:/app/workdir
     restart: unless-stopped
@@ -18,7 +18,7 @@ services:
       dockerfile: Dockerfile
     container_name: env-king-web
     ports:
-      - "28889:3001"
+      - "127.0.0.1:28889:3001"
     depends_on:
       - env-king
     restart: unless-stopped
