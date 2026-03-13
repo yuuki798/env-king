@@ -113,10 +113,13 @@ export function useAgentChat(currentPage: string) {
   const [streamingContent, setStreamingContent] = useState("")
   const [skills, setSkills] = useState<Skill[]>([])
   const [activeSkills, setActiveSkills] = useState<Set<string>>(new Set())
+  const [defaultSkillIds, setDefaultSkillIds] = useState<string[]>([])
   const [sessionId, setSessionId] = useState<string>("")
   const [sessions, setSessions] = useState<Conversation[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const defaultSkillsAppliedRef = useRef(false)
+  const defaultSkillsFetchedRef = useRef(false)
 
   const loadSessions = useCallback(() => {
     api.get<Conversation[]>("/agent/sessions")
@@ -157,30 +160,43 @@ export function useAgentChat(currentPage: string) {
     }).catch(() => {})
   }, [loadSessions])
 
-  // 只 fetch 一次（mount 时）；切页无需重新拉取，filter 实时计算
+  // 只 fetch 一次（mount 时）：技能列表 + 默认勾选的技能 ID
   useEffect(() => {
-    api.get<Skill[]>("/agent/skills")
-      .then((r) => {
-        const list = Array.isArray(r.data) ? r.data : []
-        setSkills(list)
-      })
-      .catch(() => {})
+    Promise.all([
+      api.get<Skill[]>("/agent/skills").then((r) => Array.isArray(r.data) ? r.data : []),
+      api.get<{ defaultSkills?: string[] }>("/agent/default-skills").then((r) => {
+        defaultSkillsFetchedRef.current = true
+        return r.data?.defaultSkills ?? []
+      }),
+    ]).then(([list, defaults]) => {
+      setSkills(list)
+      setDefaultSkillIds(Array.isArray(defaults) ? defaults : [])
+    }).catch(() => setSkills([]))
   }, [])
 
   useEffect(() => {
     loadSessions()
   }, [loadSessions])
 
-  // 当页面切换或 skills 加载完成时，自动激活当前页面的 skills
+  // 首次加载：等默认技能接口返回后，用持久化的默认技能初始化勾选；之后用户可取消勾选，不再覆盖
   useEffect(() => {
-    if (skills.length === 0) return
-    const auto = new Set<string>()
-    skills.forEach((s) => {
-      if (!s.pages || s.pages.length === 0) return
-      if (s.pages.includes(currentPage)) auto.add(s.id)
-    })
-    setActiveSkills(auto)
-  }, [currentPage, skills])
+    if (skills.length === 0 || !defaultSkillsFetchedRef.current || defaultSkillsAppliedRef.current) return
+    const validIds = new Set(skills.map((s) => s.id))
+    if (defaultSkillIds.length > 0) {
+      const initial = new Set<string>()
+      defaultSkillIds.forEach((id) => validIds.has(id) && initial.add(id))
+      setActiveSkills(initial)
+    } else {
+      // 无默认配置时，按当前页面自动勾选
+      const auto = new Set<string>()
+      skills.forEach((s) => {
+        if (!s.pages || s.pages.length === 0) return
+        if (s.pages.includes(currentPage)) auto.add(s.id)
+      })
+      setActiveSkills(auto)
+    }
+    defaultSkillsAppliedRef.current = true
+  }, [skills, defaultSkillIds, currentPage])
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -194,6 +210,12 @@ export function useAgentChat(currentPage: string) {
       return next
     })
   }, [])
+
+  const saveAsDefaultSkills = useCallback(() => {
+    api.put("/agent/default-skills", { defaultSkills: Array.from(activeSkills) })
+      .then(() => import("sonner").then(({ toast }) => toast.success("已保存为默认技能")))
+      .catch(() => import("sonner").then(({ toast }) => toast.error("保存默认技能失败")))
+  }, [activeSkills])
 
   // 过滤出与当前页面相关（或全局）的 skills 供显示
   const allSkills = Array.isArray(skills) ? skills : []
@@ -272,21 +294,22 @@ export function useAgentChat(currentPage: string) {
 
   return {
     messages, input, setInput, streaming, streamingContent,
-    skills, visibleSkills, activeSkills, toggleSkill,
+    skills, visibleSkills, activeSkills, toggleSkill, saveAsDefaultSkills,
     sessionId, sessions, loadSessions, selectSession, startNewSession, deleteSession,
     sendMessage, scrollToBottom, messagesEndRef,
   }
 }
 
-// SkillsBar：技能选择条
-export function SkillsBar({ visibleSkills, activeSkills, toggleSkill }: {
+// SkillsBar：技能选择条；可选“设为默认”将当前勾选持久化为默认
+export function SkillsBar({ visibleSkills, activeSkills, toggleSkill, onSaveAsDefault }: {
   visibleSkills: Skill[]
   activeSkills: Set<string>
   toggleSkill: (id: string) => void
+  onSaveAsDefault?: () => void
 }) {
   if (visibleSkills.length === 0) return null
   return (
-    <div className="flex flex-wrap gap-1.5 px-3 py-2 border-b border-border bg-muted/30">
+    <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-muted/30">
       {visibleSkills.map((s) => (
         <button
           key={s.id}
@@ -303,6 +326,16 @@ export function SkillsBar({ visibleSkills, activeSkills, toggleSkill }: {
           {s.name}
         </button>
       ))}
+      {onSaveAsDefault && (
+        <button
+          type="button"
+          onClick={onSaveAsDefault}
+          className="rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-foreground"
+          title="将当前勾选保存为默认（飞书会话会使用默认技能）"
+        >
+          设为默认
+        </button>
+      )}
     </div>
   )
 }
@@ -435,6 +468,7 @@ function FloatingPanelInner({
           visibleSkills={chat.visibleSkills}
           activeSkills={chat.activeSkills}
           toggleSkill={chat.toggleSkill}
+          onSaveAsDefault={chat.saveAsDefaultSkills}
         />
         <ChatBody
           messages={chat.messages}

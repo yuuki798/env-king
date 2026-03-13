@@ -34,6 +34,7 @@ var (
 	store     *infra.Store
 	baseDir   string
 	extraByID sync.Map
+	cancelByID sync.Map // jobID -> context.CancelFunc
 )
 
 func getQueue() *infra.JobQueue {
@@ -70,6 +71,28 @@ func getStore() (*infra.Store, error) {
 		store, err = infra.OpenStore(p, nil)
 	})
 	return store, err
+}
+
+func registerCancel(id string, cancel context.CancelFunc) {
+	if id == "" || cancel == nil {
+		return
+	}
+	cancelByID.Store(id, cancel)
+}
+
+func tryCancel(id string) bool {
+	if id == "" {
+		return false
+	}
+	v, ok := cancelByID.LoadAndDelete(id)
+	if !ok {
+		return false
+	}
+	if cancel, ok := v.(context.CancelFunc); ok && cancel != nil {
+		cancel()
+		return true
+	}
+	return false
 }
 
 func setExtra(id, workDir string) {
@@ -222,6 +245,34 @@ func GetJob(id string) (*JobView, bool) {
 	return &v, true
 }
 
+// CancelJob 通过 ID 中断一个仍在 pending/running 的 Job。
+func CancelJob(id string) (*JobView, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("id required")
+	}
+	q := getQueue()
+	j, ok := q.Job(id)
+	if !ok {
+		return nil, fmt.Errorf("job not found")
+	}
+	if j.Status != infra.JobPending && j.Status != infra.JobRunning {
+		return nil, fmt.Errorf("job already finished")
+	}
+	if !tryCancel(id) {
+		return nil, fmt.Errorf("job cannot be canceled")
+	}
+	// 返回最新视图（可能仍然是 running/pending，前端会继续轮询直至变为 canceled）
+	if jj, ok := q.Job(id); ok {
+		view := jobViewFrom(&jj)
+		return view, nil
+	}
+	if view, ok := GetJob(id); ok {
+		return view, nil
+	}
+	return nil, fmt.Errorf("job not found")
+}
+
 // RunFlow 编排执行：按 steps 顺序执行，遇错即停。
 func RunFlow(req FlowRunRequest) (*JobView, error) {
 	if len(req.Steps) == 0 {
@@ -229,7 +280,7 @@ func RunFlow(req FlowRunRequest) (*JobView, error) {
 	}
 
 	meta := map[string]string{"run_type": "flow"}
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	id, err := getQueue().Submit(Topic, meta, ctx, func(ctx context.Context, job *infra.Job) error {
 		workDir := req.WorkDir
@@ -244,8 +295,11 @@ func RunFlow(req FlowRunRequest) (*JobView, error) {
 		return executeSteps(ctx, job, req.Steps, req.Inputs, workDir)
 	})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
+
+	registerCancel(id, cancel)
 
 	persistJobWhenDone(id)
 
@@ -265,7 +319,7 @@ func RunCommand(req RunCommandRequest) (*JobView, error) {
 	if workDir != "" {
 		meta["work_dir"] = workDir
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	id, err := getQueue().Submit(Topic, meta, ctx, func(ctx context.Context, job *infra.Job) error {
 		dir := workDir
@@ -294,8 +348,11 @@ func RunCommand(req RunCommandRequest) (*JobView, error) {
 		return nil
 	})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
+
+	registerCancel(id, cancel)
 
 	persistJobWhenDone(id)
 
@@ -369,6 +426,7 @@ func persistJobWhenDone(id string) {
 				<-ticker.C
 				continue
 			}
+			cancelByID.Delete(id)
 			_ = saveJobSnapshot(&j)
 			return
 		}
@@ -617,7 +675,7 @@ func RunWorkflow(req WorkflowRunRequest) (*JobView, error) {
 		"workflow_id": wf.ID,
 		"workflow":    wf.Name,
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	id, err := getQueue().Submit(Topic, meta, ctx, func(ctx context.Context, job *infra.Job) error {
 		workDir := req.WorkDir
@@ -636,8 +694,11 @@ func RunWorkflow(req WorkflowRunRequest) (*JobView, error) {
 		return executeSteps(ctx, job, wf.Steps, merged, workDir)
 	})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
+
+	registerCancel(id, cancel)
 
 	persistJobWhenDone(id)
 

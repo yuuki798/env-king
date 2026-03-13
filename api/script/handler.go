@@ -12,6 +12,7 @@ func Register(r *gin.RouterGroup) {
 	g := r.Group("/script")
 	g.GET("/jobs", listJobs)
 	g.GET("/jobs/:id", getJob)
+	g.POST("/jobs/:id/cancel", cancelJob)
 	g.POST("/run-flow", runFlow)
 	g.POST("/run-command", runCommand)
 	g.GET("/presets", presets)
@@ -34,6 +35,16 @@ func getJob(c *gin.Context) {
 	job, ok := bizscript.GetJob(id)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		return
+	}
+	c.JSON(http.StatusOK, job)
+}
+
+func cancelJob(c *gin.Context) {
+	id := c.Param("id")
+	job, err := bizscript.CancelJob(id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, job)

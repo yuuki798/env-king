@@ -181,3 +181,81 @@ func parseFormFill(reply string) *FormFillAction {
 	}
 	return nil
 }
+
+// summarizeConversation 使用 LLM 将一段会话消息压缩为简短摘要。
+// previousSummary 为空时表示首次摘要；否则表示在已有摘要基础上合并新增轮次。
+func summarizeConversation(ctx context.Context, previousSummary string, msgs []ConversationMessage) (string, error) {
+	model, err := getLLM()
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	if strings.TrimSpace(previousSummary) != "" {
+		b.WriteString("下面是当前会话的已有摘要：\n")
+		b.WriteString(strings.TrimSpace(previousSummary))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("下面是本次需要合并进摘要的对话轮次（按时间顺序）：\n")
+	currentSize := 0
+	for _, m := range msgs {
+		role := "用户"
+		if m.Role != "" && m.Role != "user" {
+			role = "助手"
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" {
+			continue
+		}
+		if len(content) > 800 {
+			content = content[:800] + "…"
+		}
+		line := "[" + role + "] " + content + "\n"
+		if currentSize+len(line) > maxSummarizeInputSize {
+			break
+		}
+		b.WriteString(line)
+		currentSize += len(line)
+	}
+	if currentSize == 0 && strings.TrimSpace(previousSummary) != "" {
+		// 没有新增内容时，直接返回已有摘要
+		return strings.TrimSpace(previousSummary), nil
+	}
+
+	b.WriteString("\n请你用简洁的中文，将上述内容整合为一个新的会话摘要：")
+	b.WriteString("\n- 保留关键事实、任务目标、已完成的步骤、重要约束；")
+	b.WriteString("\n- 不要逐句复述，也不要包含无关寒暄；")
+	b.WriteString("\n- 不超过约 800 字；")
+	b.WriteString("\n- 直接输出摘要正文即可，不要再解释你的行为。\n")
+
+	prompt := b.String()
+
+	messages := []llms.MessageContent{
+		{
+			Role: llms.ChatMessageTypeSystem,
+			Parts: []llms.ContentPart{
+				llms.TextContent{Text: "你是一个专业的对话摘要助手，会用简洁清晰的中文总结对话。"},
+			},
+		},
+		{
+			Role: llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{
+				llms.TextContent{Text: prompt},
+			},
+		},
+	}
+
+	var full strings.Builder
+	streamFunc := func(ctx context.Context, chunk []byte) error {
+		full.Write(chunk)
+		return nil
+	}
+	opts := []llms.CallOption{llms.WithStreamingFunc(streamFunc)}
+	_, err = model.GenerateContent(ctx, messages, opts...)
+	if err != nil {
+		// 返回已生成的部分，尽量不让调用方完全失去摘要
+		return strings.TrimSpace(full.String()), err
+	}
+	return strings.TrimSpace(full.String()), nil
+}
+

@@ -78,6 +78,7 @@ export default function Script() {
   const [activeTab, setActiveTab] = useState<'jobs' | 'workflows'>('jobs')
   const logPreRef = useRef<HTMLPreElement>(null)
   const { formFill, clearFormFill } = useAgentFormFill()
+  const [canceling, setCanceling] = useState(false)
 
   // Agent 自动填表：收到 script.createWorkflow 时填入新建工作流表单并打开
   useEffect(() => {
@@ -160,6 +161,20 @@ export default function Script() {
         fetchJobs()
       })
       .finally(() => setRunningWorkflowId(null))
+  }
+
+  const cancelActiveJob = () => {
+    if (!activeJob?.id) return
+    setCanceling(true)
+    api
+      .post<ScriptJobView>(`/script/jobs/${activeJob.id}/cancel`, {})
+      .then((res) => {
+        if (res.data) {
+          setActiveJob(res.data)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setCanceling(false))
   }
 
   const submitCreateWorkflow = () => {
@@ -811,15 +826,30 @@ export default function Script() {
                 <span className="text-xs text-muted-foreground truncate">{activeJob.meta.workflow}</span>
               )}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setActiveJob(null)}
-              aria-label="关闭任务窗口"
-            >
-              <X className="size-4" />
-              关闭
-            </Button>
+            <div className="flex items-center gap-2">
+              {(activeJob.status === 'pending' || activeJob.status === 'running') && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={cancelActiveJob}
+                  disabled={canceling}
+                  aria-label="中断任务"
+                  className="text-destructive border-destructive/60 hover:bg-destructive/10"
+                >
+                  {canceling ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
+                  <span className="ml-1">中断</span>
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveJob(null)}
+                aria-label="关闭任务窗口"
+              >
+                <X className="size-4" />
+                关闭
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="pt-0 space-y-2">
             {activeJob.workDir && (

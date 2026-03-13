@@ -17,6 +17,8 @@ func Register(r *gin.RouterGroup) {
 	g := r.Group("/agent")
 	g.GET("/state", getState)
 	g.GET("/skills", listSkills)
+	g.GET("/default-skills", getDefaultSkills)
+	g.PUT("/default-skills", putDefaultSkills)
 	g.GET("/sessions", listSessions)
 	g.GET("/sessions/:id", getSession)
 	g.POST("/chat", chat)
@@ -41,6 +43,33 @@ func listSkills(c *gin.Context) {
 		skills = []agent.Skill{}
 	}
 	c.JSON(http.StatusOK, skills)
+}
+
+func getDefaultSkills(c *gin.Context) {
+	ids, err := agent.GetDefaultSkillIDs()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"defaultSkills": []string{}})
+		return
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"defaultSkills": ids})
+}
+
+func putDefaultSkills(c *gin.Context) {
+	var req struct {
+		DefaultSkills []string `json:"defaultSkills"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "defaultSkills required"})
+		return
+	}
+	if err := agent.SetDefaultSkillIDs(req.DefaultSkills); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func getState(c *gin.Context) {
@@ -134,10 +163,23 @@ func chatStream(c *gin.Context) {
 	c.Writer.Flush()
 
 	history := make([]struct{ Role, Content string }, 0, 32)
+	var summary string
 	if req.SessionId != "" {
 		if sess, err := agent.GetConversation(req.SessionId); err == nil {
-			for _, m := range sess.Messages {
-				history = append(history, struct{ Role, Content string }{Role: m.Role, Content: m.Content})
+			// 对已有会话执行短期记忆压缩：早期轮次合并为摘要，仅保留最近若干条完整消息。
+			if sum, turns, changed, cerr := agent.CompressSessionHistory(c.Request.Context(), sess); cerr == nil {
+				summary = strings.TrimSpace(sum)
+				for _, t := range turns {
+					history = append(history, struct{ Role, Content string }{Role: t.Role, Content: t.Content})
+				}
+				if changed {
+					_ = agent.SaveConversation(sess)
+				}
+			} else {
+				// 压缩失败时退回到完整 history，保证功能可用性
+				for _, m := range sess.Messages {
+					history = append(history, struct{ Role, Content string }{Role: m.Role, Content: m.Content})
+				}
 			}
 		}
 	}
@@ -145,6 +187,14 @@ func chatStream(c *gin.Context) {
 		for i := range req.History {
 			history = append(history, struct{ Role, Content string }{Role: req.History[i].Role, Content: req.History[i].Content})
 		}
+	}
+
+	// 若存在会话摘要，则以一条“虚拟助手消息”形式插入到 history 开头，供 LLM 参考。
+	if summary != "" {
+		prefix := "（以下是本次会话的简要摘要，请认真参考其中的事实与约束，但不要逐字复述，也不要单独输出这段文字。）\n" + summary
+		history = append([]struct{ Role, Content string }{
+			{Role: "assistant", Content: prefix},
+		}, history...)
 	}
 
 	streamFn := func(ctx context.Context, chunk []byte) error {

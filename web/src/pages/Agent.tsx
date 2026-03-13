@@ -82,6 +82,7 @@ export default function Agent() {
             visibleSkills={chat.visibleSkills}
             activeSkills={chat.activeSkills}
             toggleSkill={chat.toggleSkill}
+            onSaveAsDefault={chat.saveAsDefaultSkills}
           />
           <ChatBody
             messages={chat.messages}

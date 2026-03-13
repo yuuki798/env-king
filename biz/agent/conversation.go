@@ -21,10 +21,13 @@ type ConversationMessage struct {
 // Conversation 一次会话（持久化到 workdir/.agents/conversations/{id}.json）
 type Conversation struct {
 	ID        string                `json:"id"`
-	Title     string                `json:"title"`     // 首条用户消息截断，便于列表展示
+	Title     string                `json:"title"`              // 首条用户消息截断，便于列表展示
 	CreatedAt string                `json:"createdAt"`
 	UpdatedAt string                `json:"updatedAt"`
 	Messages  []ConversationMessage `json:"messages"`
+	// Summary 为当前会话的压缩摘要，用于控制上下文长度。
+	// 早期轮次会被浓缩进 Summary，并仅保留最近若干轮的完整消息发送给 LLM。
+	Summary string `json:"summary,omitempty"`
 }
 
 func conversationsDir() string {
