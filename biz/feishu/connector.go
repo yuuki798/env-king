@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -19,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 
 	bizagent "yuuki798/env-king/biz/agent"
+	bizscript "yuuki798/env-king/biz/script"
 )
 
 var mentionRe = regexp.MustCompile(`@_user_\d+`)
@@ -27,20 +29,49 @@ var mentionRe = regexp.MustCompile(`@_user_\d+`)
 // - 每个 chat_id 对应独立的 Agent 会话
 // - 只响应明确 @机器人 的消息
 // - 收到消息立即先发"思考中…"占位卡，LLM 结束后 patch 替换
+// - 支持运行时开启/关闭消息监听
 type Connector struct {
 	cli          *lark.Client
 	bot          *bizagent.FeishuBot
 	appID        string
 	appSecret    string
-	botOpenID    string            // 机器人自身的 open_id，用于 @mention 检测
+	botOpenID    string             // 机器人自身的 open_id，用于 @mention 检测
 	allowedChats map[string]struct{} // 非空时只响应白名单内的群
-	dedup        sync.Map          // 防止同一消息重复处理
+	dedup        sync.Map           // 防止同一消息重复处理
+
+	// enabled 控制是否处理收到的消息（1=开启，0=关闭）
+	enabled int32
+	// wsCancel 用于停止 WebSocket 长连接
+	wsCancel context.CancelFunc
+	wsMu     sync.Mutex
+	// jobHookID 注册的 job 完成通知 hook id，用于注销
+	jobHookID string
 }
 
 var (
 	connOnce  sync.Once
 	singleton *Connector
 )
+
+// GetConnector 返回已初始化的单例（未初始化时返回 nil）。
+func GetConnector() *Connector { return singleton }
+
+// IsEnabled 返回当前飞书监听是否处于开启状态。
+func (c *Connector) IsEnabled() bool {
+	return atomic.LoadInt32(&c.enabled) == 1
+}
+
+// Enable 开启消息监听（若已开启则无操作）。
+func (c *Connector) Enable() {
+	atomic.StoreInt32(&c.enabled, 1)
+	log.Println("[feishu] 消息监听已开启")
+}
+
+// Disable 关闭消息监听（已收到的消息不再处理；WebSocket 连接保持，节省重连开销）。
+func (c *Connector) Disable() {
+	atomic.StoreInt32(&c.enabled, 0)
+	log.Println("[feishu] 消息监听已关闭")
+}
 
 // FromConfig 读取 viper 配置创建 Connector 单例；未配置 app_id/app_secret 时返回 nil。
 func FromConfig() *Connector {
@@ -97,6 +128,8 @@ func newConnector(appID, appSecret string, allowedChats map[string]struct{}) *Co
 		}
 		log.Printf("[feishu] 群聊白名单: %v", ids)
 	}
+	// 默认开启
+	atomic.StoreInt32(&c.enabled, 1)
 	return c
 }
 
@@ -137,8 +170,20 @@ func fetchBotOpenID(cli *lark.Client) string {
 	return result.Bot.OpenID
 }
 
-// Start 启动飞书 WebSocket 长连接（阻塞）。
+// Start 启动飞书 WebSocket 长连接（阻塞），并注册 job 完成通知 hook。
 func (c *Connector) Start(ctx context.Context) {
+	// 注册 job 完成后的飞书通知 hook
+	c.wsMu.Lock()
+	if c.jobHookID == "" {
+		c.jobHookID = bizscript.RegisterJobDoneHook(func(job *bizscript.JobView) {
+			if !c.IsEnabled() {
+				return
+			}
+			c.notifyJobDone(job)
+		})
+	}
+	c.wsMu.Unlock()
+
 	handler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 			return c.onMessageReceive(ctx, event)
@@ -154,8 +199,61 @@ func (c *Connector) Start(ctx context.Context) {
 	}
 }
 
+// notifyJobDone 查找 job 对应的 chat_id，并向飞书群发送任务完成通知。
+func (c *Connector) notifyJobDone(job *bizscript.JobView) {
+	if job == nil || job.ID == "" {
+		return
+	}
+	st, err := bizagent.GetFeishuStoreExported()
+	if err != nil {
+		return
+	}
+	raw, err := st.GetString(bizagent.FeishuBucketJobNotify, job.ID)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	chatID := strings.TrimSpace(string(raw))
+	if chatID == "" {
+		return
+	}
+	// 清理已消费的映射
+	_ = st.DeleteString(bizagent.FeishuBucketJobNotify, job.ID)
+
+	// 构建通知内容
+	statusEmoji := "✅"
+	if job.Status == "failed" {
+		statusEmoji = "❌"
+	} else if job.Status == "canceled" {
+		statusEmoji = "⏹️"
+	}
+
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("%s **任务执行完毕**\n\n", statusEmoji))
+	msg.WriteString(fmt.Sprintf("- **任务 ID**：`%s`\n", job.ID))
+	msg.WriteString(fmt.Sprintf("- **状态**：`%s`\n", job.Status))
+	if job.Error != "" {
+		msg.WriteString(fmt.Sprintf("- **错误**：%s\n", job.Error))
+	}
+	if job.Logs != "" {
+		logs := job.Logs
+		const maxLogLen = 800
+		if len(logs) > maxLogLen {
+			logs = "..." + logs[len(logs)-maxLogLen:]
+		}
+		msg.WriteString(fmt.Sprintf("\n**日志（末尾）：**\n```\n%s\n```", logs))
+	}
+
+	if sendErr := c.sendMarkdownToChat(context.Background(), chatID, msg.String()); sendErr != nil {
+		log.Printf("[feishu] 发送任务完成通知失败 chat_id=%s job_id=%s: %v", chatID, job.ID, sendErr)
+	}
+}
+
 // onMessageReceive 处理飞书收到的消息事件。
 func (c *Connector) onMessageReceive(_ context.Context, event *larkim.P2MessageReceiveV1) error {
+	// 监听开关关闭时丢弃所有消息
+	if !c.IsEnabled() {
+		return nil
+	}
 	if event == nil || event.Event == nil {
 		return nil
 	}

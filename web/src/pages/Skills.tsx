@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api, type LoadBalanceConfig, type ModelEndpoint } from '@/api/client'
-import { Wrench, Plus, Trash2, Scale } from 'lucide-react'
+import { Wrench, Plus, Trash2, Scale, MessageSquare } from 'lucide-react'
 
 export default function Skills() {
   const [mcp, setMcp] = useState<string[]>([])
@@ -14,12 +14,30 @@ export default function Skills() {
   const [newModel, setNewModel] = useState<Partial<ModelEndpoint>>({ name: '', url: '', weight: 1 })
   const [loading, setLoading] = useState<string | null>(null)
 
+  // 飞书开关状态
+  const [feishuConfigured, setFeishuConfigured] = useState(false)
+  const [feishuEnabled, setFeishuEnabled] = useState(false)
+  const [feishuLoading, setFeishuLoading] = useState(false)
+
   const refresh = () => {
     api.get('/skills/mcp').then((r) => setMcp(r.data || [])).catch(() => {})
     api.get('/skills/list').then((r) => setSkills(r.data || [])).catch(() => {})
     api.get('/skills/load-balance').then((r) => setLoadCfg(r.data || { models: [] })).catch(() => {})
+    api.get('/feishu/status').then((r) => {
+      setFeishuConfigured(!!r.data?.configured)
+      setFeishuEnabled(!!r.data?.enabled)
+    }).catch(() => {})
   }
   useEffect(() => refresh(), [])
+
+  const toggleFeishu = () => {
+    setFeishuLoading(true)
+    const action = feishuEnabled ? 'disable' : 'enable'
+    api.post(`/feishu/${action}`, {})
+      .then(() => setFeishuEnabled(!feishuEnabled))
+      .catch(() => {})
+      .finally(() => setFeishuLoading(false))
+  }
 
   const installMcp = () => {
     if (!mcpSource.trim()) return
@@ -144,6 +162,41 @@ export default function Skills() {
               </ul>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* 飞书机器人 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="size-5" />
+            飞书机器人
+          </CardTitle>
+          <CardContent className="pt-0 text-sm text-muted-foreground">
+            控制飞书群消息监听开关（需在配置中心填写 app_id / app_secret）
+          </CardContent>
+        </CardHeader>
+        <CardContent>
+          {!feishuConfigured ? (
+            <p className="text-sm text-muted-foreground">飞书未配置，请先在配置中心填写 feishu.app_id 和 feishu.app_secret。</p>
+          ) : (
+            <div className="flex items-center gap-4">
+              <span className="text-sm">
+                当前状态：
+                <span className={feishuEnabled ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
+                  {feishuEnabled ? '监听中' : '已关闭'}
+                </span>
+              </span>
+              <Button
+                variant={feishuEnabled ? 'destructive' : 'default'}
+                size="sm"
+                onClick={toggleFeishu}
+                disabled={feishuLoading}
+              >
+                {feishuEnabled ? '关闭监听' : '开启监听'}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

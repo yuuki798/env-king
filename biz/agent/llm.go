@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"regexp"
 	"strings"
@@ -68,7 +69,10 @@ type FormFillAction struct {
 	Payload json.RawMessage `json:"payload"` // 表单字段 JSON，由前端按表单解析
 }
 
-// ChatStream 流式对话：对 streamFn 逐 chunk 回调，返回完整回复与解析出的 form_fill（若有）。
+const maxToolCallRounds = 4 // 最多循环几轮工具调用，防止无限循环
+
+// ChatStream 流式对话：支持 ReAct 风格工具调用（[TOOL_CALL]...[/TOOL_CALL]），
+// 若 LLM 输出中包含 TOOL_CALL 块则自动执行并将结果喂回，直到获得无工具调用的最终回复。
 // activeSkills 为前端传入的已激活 skill ID 列表，空时退回基础 prompt。
 func ChatStream(ctx context.Context, currentPage, userMessage string, history []struct{ Role, Content string }, activeSkills []string, streamFn func(ctx context.Context, chunk []byte) error) (fullReply string, formFill *FormFillAction, err error) {
 	model, err := getLLM()
@@ -80,27 +84,75 @@ func ChatStream(ctx context.Context, currentPage, userMessage string, history []
 	log.Printf("[agent] chat page=%s activeSkills=%v", currentPage, activeSkills)
 	messages := buildMessages(systemPrompt, userMessage, history)
 
-	var full strings.Builder
-	streamFunc := func(ctx context.Context, chunk []byte) error {
-		full.Write(chunk)
-		if streamFn != nil {
-			return streamFn(ctx, chunk)
+	for round := 0; round < maxToolCallRounds; round++ {
+		// 先无流式地收集完整输出，方便检测 TOOL_CALL 块
+		var full strings.Builder
+		collectFn := func(_ context.Context, chunk []byte) error {
+			full.Write(chunk)
+			return nil
 		}
-		return nil
+		opts := []llms.CallOption{llms.WithStreamingFunc(collectFn)}
+		_, genErr := model.GenerateContent(ctx, messages, opts...)
+		rawOutput := full.String()
+
+		toolCalls := ParseToolCalls(rawOutput)
+
+		if len(toolCalls) == 0 || round == maxToolCallRounds-1 {
+			// 无工具调用（或已达到最大轮数）=> 这是最终回复
+			finalReply := StripToolCalls(rawOutput)
+			if streamFn != nil {
+				// 模拟流式输出：把收集到的内容分块推给调用方
+				const chunkSize = 64
+				for i := 0; i < len(finalReply); i += chunkSize {
+					end := i + chunkSize
+					if end > len(finalReply) {
+						end = len(finalReply)
+					}
+					if ferr := streamFn(ctx, []byte(finalReply[i:end])); ferr != nil {
+						break
+					}
+				}
+			}
+			if genErr != nil {
+				return finalReply, nil, genErr
+			}
+			formFill = parseFormFill(rawOutput)
+			log.Printf("[agent] chat user=%q", truncateForLog(userMessage, 200))
+			log.Printf("[agent] chat reply=%q form_fill=%v tool_rounds=%d",
+				truncateForLog(finalReply, 500), formFill != nil, round)
+			return finalReply, formFill, nil
+		}
+
+		// 有工具调用 => 逐一执行，把结果构造成新的 human 消息加入历史
+		log.Printf("[agent] tool_call round=%d calls=%d", round, len(toolCalls))
+
+		// 把 LLM 的这轮回复（含 TOOL_CALL 块）加入消息历史
+		messages = append(messages, llms.MessageContent{
+			Role:  llms.ChatMessageTypeAI,
+			Parts: []llms.ContentPart{llms.TextContent{Text: rawOutput}},
+		})
+
+		var resultParts []string
+		for i, tc := range toolCalls {
+			result, tcErr := ExecuteToolCall(ctx, tc)
+			if tcErr != nil {
+				result = fmt.Sprintf("工具调用失败: %v", tcErr)
+			}
+			log.Printf("[agent] tool_call[%d] %s %s => %s", i, tc.Method, tc.Path, truncateForLog(result, 200))
+			resultParts = append(resultParts, fmt.Sprintf("[TOOL_RESULT %d]\n%s\n[/TOOL_RESULT]", i, result))
+		}
+
+		// 把工具结果作为 human 消息喂回给 LLM
+		feedbackMsg := strings.Join(resultParts, "\n\n") +
+			"\n\n请根据以上工具调用结果，用自然语言向用户汇报操作结果，不要再输出 [TOOL_CALL] 块。"
+		messages = append(messages, llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: feedbackMsg}},
+		})
 	}
 
-	opts := []llms.CallOption{llms.WithStreamingFunc(streamFunc)}
-	_, err = model.GenerateContent(ctx, messages, opts...)
-	if err != nil {
-		return full.String(), nil, err
-	}
-
-	reply := full.String()
-	formFill = parseFormFill(reply)
-	// 对话日志（便于排查与审计）
-	log.Printf("[agent] chat user=%q", truncateForLog(userMessage, 200))
-	log.Printf("[agent] chat reply=%q form_fill=%v", truncateForLog(reply, 500), formFill != nil)
-	return reply, formFill, nil
+	// 理论上不会走到这里
+	return "", nil, fmt.Errorf("工具调用超过最大轮数 %d", maxToolCallRounds)
 }
 
 func truncateForLog(s string, max int) string {

@@ -2,8 +2,9 @@ package api
 
 import (
 	"yuuki798/env-king/api/agent"
-	"yuuki798/env-king/api/mihomo"
 	"yuuki798/env-king/api/config"
+	apifeishu "yuuki798/env-king/api/feishu"
+	"yuuki798/env-king/api/mihomo"
 	"yuuki798/env-king/api/script"
 	"yuuki798/env-king/api/skills"
 
@@ -19,6 +20,7 @@ func Setup(r *gin.Engine) {
 		mihomo.Register(api)
 		agent.Register(api)
 		skills.Register(api)
+		apifeishu.Register(api)
 	}
 }
 

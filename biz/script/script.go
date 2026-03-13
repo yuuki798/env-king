@@ -409,7 +409,22 @@ func sanitizeShellCommand(cmd, workDir string) (string, error) {
 	return cmd, nil
 }
 
-// persistJobWhenDone 在 Job 结束后将其快照持久化到 store。
+// jobDoneHooks 存储全局 job 完成回调，key 无意义，使用 sync.Map 方便并发注册/注销。
+var jobDoneHooks sync.Map // string(hookID) -> func(*JobView)
+
+// RegisterJobDoneHook 注册一个 job 完成时触发的回调，返回 hookID 供注销使用。
+func RegisterJobDoneHook(fn func(*JobView)) string {
+	id := fmt.Sprintf("hook_%d", time.Now().UnixNano())
+	jobDoneHooks.Store(id, fn)
+	return id
+}
+
+// UnregisterJobDoneHook 注销指定 hookID 的回调。
+func UnregisterJobDoneHook(id string) {
+	jobDoneHooks.Delete(id)
+}
+
+// persistJobWhenDone 在 Job 结束后将其快照持久化到 store，并触发所有注册的回调。
 func persistJobWhenDone(id string) {
 	go func() {
 		q := getQueue()
@@ -428,6 +443,15 @@ func persistJobWhenDone(id string) {
 			}
 			cancelByID.Delete(id)
 			_ = saveJobSnapshot(&j)
+
+			// 触发所有注册的 job 完成回调
+			view := jobViewFrom(&j)
+			jobDoneHooks.Range(func(_, v interface{}) bool {
+				if fn, ok := v.(func(*JobView)); ok {
+					go fn(view)
+				}
+				return true
+			})
 			return
 		}
 	}()

@@ -13,6 +13,17 @@ import (
 
 const feishuBucketSessions = "feishu_sessions"
 
+// FeishuBucketJobNotify 是 job_id -> chat_id 映射的 bbolt bucket 名（导出供 biz/feishu 包读取）。
+const FeishuBucketJobNotify = "feishu_job_notify"
+
+// feishuBucketJobNotify 包内用的小写别名
+const feishuBucketJobNotify = FeishuBucketJobNotify
+
+// GetFeishuStoreExported 返回飞书用 bbolt store（导出给 biz/feishu 包读取 job 通知映射）。
+func GetFeishuStoreExported() (*infra.Store, error) {
+	return getFeishuStore()
+}
+
 var (
 	feishuStoreOnce sync.Once
 	feishuStore     *infra.Store
@@ -98,11 +109,13 @@ func (b *FeishuBot) HandleIncomingMessage(ctx context.Context, chatID, userText 
 	}
 
 	// 3. 使用持久化的默认技能，请求 LLM 时带上
+	//    同时将 chatID 注入 context，供 HTTP 工具层记录 job_id -> chat_id 映射
 	activeSkills, _ := GetDefaultSkillIDs()
 	if activeSkills == nil {
 		activeSkills = []string{}
 	}
-	fullReply, _, err := ChatStream(ctx, "", userText, history, activeSkills, nil)
+	ctxWithChat := WithChatID(ctx, chatID)
+	fullReply, _, err := ChatStream(ctxWithChat, "", userText, history, activeSkills, nil)
 	if err != nil {
 		return "", err
 	}
