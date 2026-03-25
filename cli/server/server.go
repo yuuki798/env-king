@@ -16,8 +16,8 @@ var ServerCmd = &cobra.Command{
 		initial.InitAll()
 		r := gin.Default()
 		initial.InitRouter(r)
-		log.Println("Env King server starting on :8080")
-		if err := r.Run(":8080"); err != nil {
+		log.Println("Env King server starting on :28889")
+		if err := r.Run("127.0.0.1:28889"); err != nil {
 			log.Fatalf("server failed: %v", err)
 		}
 	},
